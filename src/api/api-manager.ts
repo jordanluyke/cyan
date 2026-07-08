@@ -29,7 +29,7 @@ export class ApiManager {
             .once('clientReady', () => {
                 console.log('Ready')
                 client.user.setActivity({
-                    name: `!cyan | !roll`,
+                    name: `!cyan | !roll | !grok`,
                 })
             })
             .once('reconnecting', () => {
