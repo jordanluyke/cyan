@@ -8,10 +8,9 @@ import {
     getVoiceConnection,
     joinVoiceChannel,
 } from '@discordjs/voice'
-import ytdl from 'ytdl-core'
+import youtubedl from 'youtube-dl-exec'
 import { Message, PermissionFlagsBits, TextChannel } from 'discord.js'
 import { youtube_v3 } from 'googleapis'
-import { HttpUtil } from '../util/http-util.js'
 import { BotStateManager } from '../bot-state/bot-state-manager.js'
 import { BotState } from '../bot-state/model/bot-state.js'
 import { TimeUnit } from '../util/time-unit.js'
@@ -19,6 +18,7 @@ import { BotError } from './model/error/bot-error.js'
 import { Readable } from 'stream'
 import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
+import { YoutubeUtil } from '../util/youtube-util.js'
 
 @injectable()
 export class AudioManager {
@@ -139,12 +139,10 @@ export class AudioManager {
             auth: this.config.youtubeApiKey,
         })
 
-        if (remainingArgs[0].match(/^https:\/\/.*youtube.com\/.+$/)) {
-            const splitUrl = remainingArgs[0].split('?')
-            if (splitUrl.length != 2) throw new BotError('Invalid url', 'Invalid url')
-            const qs = splitUrl[1]
-            const params = HttpUtil.queryStringToMap(qs)
-            const playlistId = params.get('list')
+        const input = remainingArgs[0]
+
+        if (YoutubeUtil.isYoutubeUrl(input)) {
+            const playlistId = YoutubeUtil.parsePlaylistId(input)
             if (playlistId != null) {
                 const res = await youtube.playlistItems.list({
                     maxResults: 50,
@@ -166,6 +164,21 @@ export class AudioManager {
                         throw new BotError('voiceChannel null', 'Voice channel not found')
                     return new AudioQueueItem(title, videoId, message, inputFlags)
                 })
+            } else {
+                const videoId = YoutubeUtil.parseVideoId(input)
+                if (videoId == null) throw new BotError('Invalid url', 'Invalid YouTube url')
+                const res = await youtube.videos.list({
+                    part: ['snippet'],
+                    id: [videoId],
+                })
+                const items = res.data.items
+                if (items == null || items.length == 0)
+                    throw new BotError('video not found', 'Video not found')
+                const snippet = items[0].snippet
+                if (snippet == null) throw new BotError('snippet null', 'snippet not found')
+                const title = snippet.title
+                if (title == null) throw new BotError('title null', 'title not found')
+                queueItems.push(new AudioQueueItem(title, videoId, message, inputFlags))
             }
         } else {
             const searchTerms = remainingArgs.join(' ')
@@ -233,21 +246,24 @@ export class AudioManager {
     private getYoutubeVideo(videoId: string): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
-            ytdl(videoId, {
-                filter: (format) => {
-                    console.log('format:', format)
-                    return format.container === 'mp4' && !format.hasVideo
-                },
+            const subprocess = youtubedl.exec(`https://www.youtube.com/watch?v=${videoId}`, {
+                output: '-',
+                format: 'bestaudio[acodec=opus]/bestaudio/best',
+                formatSort: ['abr'],
+                quiet: true,
+                noWarnings: true,
             })
-                .on('error', (err: any) => {
-                    reject(err)
-                })
-                .on('data', (chunk: Buffer) => {
-                    chunks.push(chunk)
-                })
-                .on('finish', () => {
+            subprocess.stdout.on('data', (chunk: Buffer) => {
+                chunks.push(chunk)
+            })
+            subprocess.on('error', reject)
+            subprocess.on('close', (code) => {
+                if (code === 0) {
                     resolve(Buffer.concat(chunks))
-                })
+                    return
+                }
+                reject(new Error(`yt-dlp exited with code ${code}`))
+            })
         })
     }
 

@@ -31,9 +31,9 @@ import * as util from 'util'
     async function compile() {
         try {
             const cmd = 'npx tsc'
-            const { err, stdout, stderr } = await util.promisify(childProcess.exec)(cmd)
-            if (err || stderr)
-                throw stderr || stdout
+            const { stdout, stderr } = await util.promisify(childProcess.exec)(cmd)
+            if (stdout) console.log(stdout)
+            if (stderr) console.error(stderr)
         } catch(err) {
             console.log('Compile failed')
             throw err

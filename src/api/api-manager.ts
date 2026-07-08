@@ -1,6 +1,7 @@
 import { singleton } from 'tsyringe'
 import { Config } from '../config.js'
 import { Client, GatewayIntentBits, Message, TextChannel } from 'discord.js'
+import { BotError } from '../audio/model/error/bot-error.js'
 import { ApiV1 } from './api-v1.js'
 
 const api = new ApiV1()
@@ -60,10 +61,13 @@ export class ApiManager {
             await handler.handle(message, args)
         } catch (err) {
             console.error(`!${command} error: ${err}`)
-            console.error(err.stack ?? err)
-            const msg = err.sendMessage
-                ? 'Error: ' + err.sendMessage
-                : 'Something bad happened (˚ ˃̣̣̥⌓˂̣̣̥ )'
+            if (err instanceof Error) {
+                console.error(err.stack ?? err)
+            }
+            const msg =
+                err instanceof BotError && err.sendMessage
+                    ? 'Error: ' + err.sendMessage
+                    : 'Something bad happened (˚ ˃̣̣̥⌓˂̣̣̥ )'
             const channel = message.channel as TextChannel
             await channel.send(msg)
         }

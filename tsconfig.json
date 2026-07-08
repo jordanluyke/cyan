@@ -8,12 +8,11 @@
         "noImplicitAny": false,
         "noImplicitReturns": true,
         "outDir": "target",
+        "rootDir": "src",
         "resolveJsonModule": true,
+        "skipLibCheck": true,
         "sourceMap": true,
         "strictNullChecks": false,
         "target": "esnext"
-    },
-    "include": [
-        "src/**/*"
-    ]
+    }
 }
