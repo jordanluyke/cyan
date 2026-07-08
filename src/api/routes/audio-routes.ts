@@ -1,62 +1,57 @@
 import { Message, TextChannel } from 'discord.js'
-import { autoInjectable } from 'tsyringe'
+import { injectable } from 'tsyringe'
 import { MessageRouteHandler } from '../model/message-route-handler.js'
 import { AudioManager } from '../../audio/audio-manager.js'
 
-@autoInjectable()
+@injectable()
 export class PlayAudio implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         return this.audioManager.play(guildId, message, args)
     }
 }
 
-@autoInjectable()
+@injectable()
 export class PauseAudio implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         return this.audioManager.pause(guildId)
     }
 }
 
-@autoInjectable()
+@injectable()
 export class StopAudio implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         return this.audioManager.stop(guildId)
     }
 }
 
-@autoInjectable()
+@injectable()
 export class SkipAudio implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         this.audioManager.skip(guildId, message)
     }
 }
 
-@autoInjectable()
+@injectable()
 export class GetAudioQueue implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         const queue = await this.audioManager.getQueue(guildId)
@@ -74,24 +69,22 @@ export class GetAudioQueue implements MessageRouteHandler {
     }
 }
 
-@autoInjectable()
+@injectable()
 export class ClearAudioQueue implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         return this.audioManager.clearQueue(guildId)
     }
 }
 
-@autoInjectable()
+@injectable()
 export class GetAudioSource implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         const queue = await this.audioManager.getQueue(guildId)
@@ -106,21 +99,13 @@ export class GetAudioSource implements MessageRouteHandler {
     }
 }
 
-@autoInjectable()
+@injectable()
 export class ReplaceAudioQueueItem implements MessageRouteHandler {
-    constructor(public audioManager?: AudioManager) {}
+    constructor(public audioManager: AudioManager) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
-        if (this.audioManager == null) throw new Error('Injection failed')
         if (message.guild == null) throw new Error('guild null')
         const guildId = message.guild.id
         return this.audioManager.replaceQueueItem(guildId, message, args)
     }
-}
-
-@autoInjectable()
-export class DownloadMessages implements MessageRouteHandler {
-    constructor() {}
-
-    public async handle(message: Message, args: string[]): Promise<void> {}
 }

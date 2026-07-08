@@ -1,4 +1,4 @@
-import { singleton } from 'tsyringe'
+import { container, singleton } from 'tsyringe'
 import { Config } from '../config.js'
 import { Client, GatewayIntentBits, Message, TextChannel } from 'discord.js'
 import { BotError } from '../audio/model/error/bot-error.js'
@@ -56,7 +56,7 @@ export class ApiManager {
         const args = parts.slice(1)
         const route = api.commandRoutes.find((route) => route.command == command)
         if (route == null) return
-        const handler = new route.handler()
+        const handler = container.resolve(route.handler)
         try {
             await handler.handle(message, args)
         } catch (err) {

@@ -1,17 +1,17 @@
 import { Message, TextChannel } from 'discord.js'
-import { autoInjectable } from 'tsyringe'
+import { injectable } from 'tsyringe'
 import { Config } from '../../config.js'
 import { BotError } from '../../audio/model/error/bot-error.js'
 import { GrokUtil } from '../../util/grok-util.js'
 import { MessageRouteHandler } from '../model/message-route-handler.js'
 
-@autoInjectable()
+@injectable()
 export class Grok implements MessageRouteHandler {
-    constructor(private config?: Config) {}
+    constructor(private config: Config) {}
 
     public async handle(message: Message, args: string[]): Promise<void> {
         const channel = message.channel as TextChannel
-        if (this.config?.xaiApiKey == null) {
+        if (this.config.xaiApiKey == null) {
             throw new BotError('XAI_API_KEY not configured', 'Grok is not configured on this bot')
         }
         const prompt = args.join(' ').trim()
