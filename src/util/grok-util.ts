@@ -29,7 +29,7 @@ export class GrokUtil {
                 Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-                model: 'grok-4.3',
+                model: 'grok-4.5',
                 messages: [
                     {
                         role: 'system',
