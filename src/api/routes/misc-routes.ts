@@ -38,8 +38,8 @@ export class Commands implements MessageRouteHandler {
         const channel = message.channel as TextChannel
         await channel.send(
             [
+                '### Audio',
                 '!clear',
-                '!download_messages',
                 '!pause',
                 '!play [search/url/playlist]',
                 '!queue',
@@ -47,6 +47,11 @@ export class Commands implements MessageRouteHandler {
                 '!skip',
                 '!source',
                 '!stop',
+                '',
+                '### Channel',
+                '!download_messages',
+                '',
+                '### Misc',
                 '!roll [dice/number]',
                 '!grok [prompt]',
             ].join('\n')
