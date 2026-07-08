@@ -4,6 +4,7 @@ import { Config } from '../config.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { DiscordUtil } from '../util/discord-util.js'
 import { GrokUtil } from '../util/grok-util.js'
+import { GrokPrompt } from './model/grok-prompt.js'
 
 @injectable()
 export class GrokManager {
@@ -26,10 +27,10 @@ export class GrokManager {
         await this.sendResponse(message, response)
     }
 
-    private async buildPrompt(message: Message, args: string[]): Promise<string | null> {
+    private async buildPrompt(message: Message, args: string[]): Promise<GrokPrompt | null> {
         const userPrompt = args.join(' ').trim()
         if (message.reference == null) {
-            return userPrompt.length > 0 ? userPrompt : null
+            return this.buildDirectPrompt(message, userPrompt)
         }
 
         let referencedMessage: Message
@@ -43,10 +44,11 @@ export class GrokManager {
         }
 
         const referencedContent = DiscordUtil.getMessageText(referencedMessage)
-        if (referencedContent.length === 0 && userPrompt.length === 0) {
+        const imageUrls = DiscordUtil.getMessageImages(referencedMessage)
+        if (!DiscordUtil.hasMessageContent(referencedMessage) && userPrompt.length === 0) {
             throw new BotError(
-                'referenced message has no text',
-                'The message you replied to has no text content'
+                'referenced message has no content',
+                'The message you replied to has no text or supported images'
             )
         }
 
@@ -54,13 +56,31 @@ export class GrokManager {
         if (referencedContent.length > 0) {
             const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
             parts.push(`Referenced message from ${displayName}:\n${referencedContent}`)
+        } else if (imageUrls.length > 0) {
+            const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
+            parts.push(`Referenced message from ${displayName} contains image(s).`)
         }
+
+        let text = parts.join('\n\n')
         if (userPrompt.length > 0) {
-            parts.push(`User request: ${userPrompt}`)
+            text = text.length > 0 ? `${text}\n\nUser request: ${userPrompt}` : `User request: ${userPrompt}`
+        } else if (imageUrls.length > 0) {
+            text =
+                text.length > 0
+                    ? `${text}\n\nPlease describe the image(s).`
+                    : 'Please describe the image(s).'
         } else {
-            parts.push('Please respond to the referenced message above.')
+            text = text.length > 0 ? text : 'Please respond to the referenced message above.'
         }
-        return parts.join('\n\n')
+
+        return new GrokPrompt(text, imageUrls)
+    }
+
+    private buildDirectPrompt(message: Message, userPrompt: string): GrokPrompt | null {
+        const imageUrls = DiscordUtil.getMessageImages(message)
+        if (userPrompt.length === 0 && imageUrls.length === 0) return null
+        const text = userPrompt.length > 0 ? userPrompt : 'Please describe the image(s).'
+        return new GrokPrompt(text, imageUrls)
     }
 
     private async sendResponse(message: Message, response: string): Promise<void> {

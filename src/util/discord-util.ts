@@ -1,5 +1,8 @@
 import { Message } from 'discord.js'
 
+const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png'])
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
 export class DiscordUtil {
     public static splitMessage(text: string, maxLength = 2000): string[] {
         if (text.length <= maxLength) return [text]
@@ -28,10 +31,32 @@ export class DiscordUtil {
             .join('\n\n')
         if (embedText.length > 0) return embedText
 
-        const attachments = message.attachments.map((attachment) => attachment.url).join('\n')
+        const attachments = message.attachments
+            .filter((attachment) => !this.isSupportedImage(attachment.contentType, attachment.name))
+            .map((attachment) => attachment.url)
+            .join('\n')
         if (attachments.length > 0) return `[Attachments]\n${attachments}`
 
         return ''
+    }
+
+    public static getMessageImages(message: Message): string[] {
+        const urls: string[] = []
+        for (const attachment of message.attachments.values()) {
+            if (!this.isSupportedImage(attachment.contentType, attachment.name)) continue
+            if (attachment.size > MAX_IMAGE_BYTES) continue
+            urls.push(attachment.url)
+        }
+        for (const embed of message.embeds) {
+            if (embed.image?.url != null && this.isSupportedImageUrl(embed.image.url)) {
+                urls.push(embed.image.url)
+            }
+        }
+        return urls
+    }
+
+    public static hasMessageContent(message: Message): boolean {
+        return this.getMessageText(message).length > 0 || this.getMessageImages(message).length > 0
     }
 
     public static async getMemberDisplayName(
@@ -46,5 +71,23 @@ export class DiscordUtil {
             } catch {}
         }
         return targetMessage.author.displayName ?? targetMessage.author.username
+    }
+
+    private static isSupportedImage(contentType: string | null, name?: string): boolean {
+        if (contentType != null && SUPPORTED_IMAGE_TYPES.has(contentType)) return true
+        if (name != null) {
+            const ext = name.split('.').pop()?.toLowerCase()
+            return ext === 'jpg' || ext === 'jpeg' || ext === 'png'
+        }
+        return false
+    }
+
+    private static isSupportedImageUrl(url: string): boolean {
+        try {
+            const pathname = new URL(url).pathname.toLowerCase()
+            return pathname.endsWith('.jpg') || pathname.endsWith('.jpeg') || pathname.endsWith('.png')
+        } catch {
+            return false
+        }
     }
 }
