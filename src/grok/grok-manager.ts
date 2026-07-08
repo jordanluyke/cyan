@@ -18,7 +18,8 @@ export class GrokManager {
         if (prompt == null) {
             await message.reply({
                 content:
-                    'Example: !grok What is the capital of France?\nOr reply to a message with: !grok explain this',
+                    'try `!grok what even is calculus`\n' +
+                    'or reply to a message/pic with `!grok explain this`',
                 allowedMentions: { repliedUser: false },
             })
             return
@@ -39,7 +40,7 @@ export class GrokManager {
         } catch {
             throw new BotError(
                 'referenced message not found',
-                'Could not find the message you replied to'
+                "couldn't find the message you replied to"
             )
         }
 
@@ -48,29 +49,26 @@ export class GrokManager {
         if (!DiscordUtil.hasMessageContent(referencedMessage) && userPrompt.length === 0) {
             throw new BotError(
                 'referenced message has no content',
-                'The message you replied to has no text or supported images'
+                "that message doesn't have any text or pics i can read"
             )
         }
 
         const parts: string[] = []
         if (referencedContent.length > 0) {
             const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
-            parts.push(`Referenced message from ${displayName}:\n${referencedContent}`)
+            parts.push(`${displayName} said:\n${referencedContent}`)
         } else if (imageUrls.length > 0) {
             const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
-            parts.push(`Referenced message from ${displayName} contains image(s).`)
+            parts.push(`${displayName} sent a pic`)
         }
 
         let text = parts.join('\n\n')
         if (userPrompt.length > 0) {
-            text = text.length > 0 ? `${text}\n\nUser request: ${userPrompt}` : `User request: ${userPrompt}`
+            text = text.length > 0 ? `${text}\n\n${userPrompt}` : userPrompt
         } else if (imageUrls.length > 0) {
-            text =
-                text.length > 0
-                    ? `${text}\n\nPlease describe the image(s).`
-                    : 'Please describe the image(s).'
+            text = text.length > 0 ? `${text}\n\nwhat's in this?` : "what's in this pic?"
         } else {
-            text = text.length > 0 ? text : 'Please respond to the referenced message above.'
+            text = text.length > 0 ? text : 'help them out with whatever they were talking about'
         }
 
         return new GrokPrompt(text, imageUrls)
@@ -79,7 +77,7 @@ export class GrokManager {
     private buildDirectPrompt(message: Message, userPrompt: string): GrokPrompt | null {
         const imageUrls = DiscordUtil.getMessageImages(message)
         if (userPrompt.length === 0 && imageUrls.length === 0) return null
-        const text = userPrompt.length > 0 ? userPrompt : 'Please describe the image(s).'
+        const text = userPrompt.length > 0 ? userPrompt : "what's in this pic?"
         return new GrokPrompt(text, imageUrls)
     }
 

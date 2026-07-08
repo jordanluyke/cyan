@@ -31,7 +31,14 @@ export class GrokUtil {
             body: JSON.stringify({
                 model: 'grok-4.3',
                 messages: [
-                    { role: 'system', content: 'You are Grok, a helpful AI assistant.' },
+                    {
+                        role: 'system',
+                        content:
+                            'You are Grok in a Discord server. ' +
+                            'Be casual, chill, and actually helpful — talk like you are in the group chat, not writing an essay. ' +
+                            'Keep answers fairly short unless they ask for detail. Humor is welcome when it fits. ' +
+                            'Skip the corporate assistant voice, disclaimers, and stiff intros.',
+                    },
                     { role: 'user', content: userContent },
                 ],
                 stream: false,
