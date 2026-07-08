@@ -48,6 +48,7 @@ export class Commands implements MessageRouteHandler {
                 '!source',
                 '!stop',
                 '!roll [dice/number]',
+                '!grok [prompt]',
             ].join('\n')
         )
     }
