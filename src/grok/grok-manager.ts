@@ -28,25 +28,26 @@ export class GrokManager {
         await this.sendResponse(message, response)
     }
 
+    private static readonly MAX_REPLY_CHAIN = 10
+
     private async buildPrompt(message: Message, args: string[]): Promise<GrokPrompt | null> {
         const userPrompt = args.join(' ').trim()
         if (message.reference == null) {
             return this.buildDirectPrompt(message, userPrompt)
         }
 
-        let referencedMessage: Message
-        try {
-            referencedMessage = await message.fetchReference()
-        } catch {
+        const chain = await this.fetchReplyChain(message)
+        if (chain.length === 0) {
             throw new BotError(
                 'referenced message not found',
                 "couldn't find the message you replied to"
             )
         }
 
-        const referencedContent = DiscordUtil.getMessageText(referencedMessage)
+        const referencedMessage = chain[chain.length - 1]
         const imageUrls = DiscordUtil.getMessageImages(referencedMessage)
-        if (!DiscordUtil.hasMessageContent(referencedMessage) && userPrompt.length === 0) {
+        const hasChainText = chain.some((m) => DiscordUtil.getMessageText(m).length > 0)
+        if (!hasChainText && imageUrls.length === 0 && userPrompt.length === 0) {
             throw new BotError(
                 'referenced message has no content',
                 "that message doesn't have any text or pics i can read"
@@ -54,12 +55,14 @@ export class GrokManager {
         }
 
         const parts: string[] = []
-        if (referencedContent.length > 0) {
-            const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
-            parts.push(`${displayName} said:\n${referencedContent}`)
-        } else if (imageUrls.length > 0) {
-            const displayName = await DiscordUtil.getMemberDisplayName(message, referencedMessage)
-            parts.push(`${displayName} sent a pic`)
+        for (const chainMessage of chain) {
+            const content = DiscordUtil.getMessageText(chainMessage)
+            const displayName = await DiscordUtil.getMemberDisplayName(message, chainMessage)
+            if (content.length > 0) {
+                parts.push(`${displayName} said:\n${content}`)
+            } else if (chainMessage.id === referencedMessage.id && imageUrls.length > 0) {
+                parts.push(`${displayName} sent a pic`)
+            }
         }
 
         let text = parts.join('\n\n')
@@ -72,6 +75,21 @@ export class GrokManager {
         }
 
         return new GrokPrompt(text, imageUrls)
+    }
+
+    /** Oldest → newest, capped at MAX_REPLY_CHAIN. Images come only from the last (immediate) reply. */
+    private async fetchReplyChain(message: Message): Promise<Message[]> {
+        const chain: Message[] = []
+        let current = message
+        while (current.reference != null && chain.length < GrokManager.MAX_REPLY_CHAIN) {
+            try {
+                current = await current.fetchReference()
+            } catch {
+                break
+            }
+            chain.push(current)
+        }
+        return chain.reverse()
     }
 
     private buildDirectPrompt(message: Message, userPrompt: string): GrokPrompt | null {
