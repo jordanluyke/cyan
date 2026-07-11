@@ -1,5 +1,11 @@
 import { injectable } from 'tsyringe'
-import { ChatInputCommandInteraction, Collection, TextChannel } from 'discord.js'
+import {
+    ChatInputCommandInteraction,
+    Collection,
+    MessageFlags,
+    PermissionFlagsBits,
+    TextChannel,
+} from 'discord.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { DiscordUtil } from '../util/discord-util.js'
 
@@ -22,11 +28,8 @@ export class ChannelManager {
             interaction.member,
             interaction.user.id
         )
-        if (!DiscordUtil.isAdminOrDev(member)) {
-            throw new BotError(
-                'missing permission',
-                'Only admins and the dev role can download messages'
-            )
+        if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
+            throw new BotError('missing permission', 'Only admins can download messages')
         }
 
         const channel = interaction.channel as TextChannel
@@ -35,7 +38,7 @@ export class ChannelManager {
 
         // Acknowledge the slash command privately; show typing in-channel instead of a
         // "Preparing..." message while the export runs.
-        await interaction.deferReply({ ephemeral: true })
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
         const stopTyping = DiscordUtil.startTyping(channel)
 
         try {

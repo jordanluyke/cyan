@@ -1,6 +1,7 @@
 import {
     ApplicationCommandType,
     ContextMenuCommandBuilder,
+    PermissionFlagsBits,
     SlashCommandBuilder,
 } from 'discord.js'
 import { SlashCommand } from './model/slash-command.js'
@@ -35,7 +36,8 @@ export class ApiV1 {
             new SlashCommand(
                 new SlashCommandBuilder()
                     .setName('download_messages')
-                    .setDescription('Export this channel’s message history as JSON'),
+                    .setDescription('Export this channel’s message history as JSON')
+                    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
                 DownloadMessages
             ),
             new SlashCommand(

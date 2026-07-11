@@ -6,6 +6,7 @@ import {
     GatewayIntentBits,
     Message,
     MessageContextMenuCommandInteraction,
+    MessageFlags,
     TextChannel,
 } from 'discord.js'
 import { BotError } from '../audio/model/error/bot-error.js'
@@ -128,9 +129,12 @@ export class ApiManager {
                     // "thinking…" message stuck forever (/draw, Ask Cyan, /play).
                     await interaction.editReply({ content: msg })
                 } else if (interaction.replied) {
-                    await interaction.followUp({ content: msg, ephemeral: true })
+                    await interaction.followUp({
+                        content: msg,
+                        flags: MessageFlags.Ephemeral,
+                    })
                 } else {
-                    await interaction.reply({ content: msg, ephemeral: true })
+                    await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
                 }
             } catch (replyErr) {
                 console.error('Failed to send error reply:', replyErr)

@@ -24,13 +24,12 @@ export class Commands implements SlashCommandHandler {
                 '`/source`',
                 '`/stop`',
                 '',
-                '### Channel',
-                '`/download_messages`',
-                '',
                 '### Misc',
                 '`/draw prompt:` `[aspect:]`',
+                '',
                 'Mention me (`@Cyan …`) to chat',
                 'Or reply to one of my messages to keep talking',
+                '',
                 'Right-click a message → **Apps → Ask Cyan**',
             ].join('\n')
         )
