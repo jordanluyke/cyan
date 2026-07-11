@@ -1,11 +1,5 @@
 import { YoutubeUtil } from '../target/util/youtube-util.js'
 
-function assertEqual(actual, expected, label) {
-    if (actual !== expected) {
-        throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
-    }
-}
-
 function resolvePlayTarget(input) {
     if (!YoutubeUtil.isYoutubeUrl(input)) return 'invalid'
     const videoId = YoutubeUtil.parseVideoId(input)
@@ -37,10 +31,10 @@ const cases = [
     ['https://music.youtube.com/watch?v=dQw4w9WgXcQ', 'dQw4w9WgXcQ', null, 'video'],
 ]
 
-for (const [url, videoId, playlistId, target] of cases) {
-    assertEqual(YoutubeUtil.parseVideoId(url), videoId, `parseVideoId ${url}`)
-    assertEqual(YoutubeUtil.parsePlaylistId(url), playlistId, `parsePlaylistId ${url}`)
-    assertEqual(resolvePlayTarget(url), target, `resolvePlayTarget ${url}`)
-}
-
-console.log(`ok: ${cases.length} youtube url cases`)
+describe('YoutubeUtil', () => {
+    test.each(cases)('%s', (url, videoId, playlistId, target) => {
+        expect(YoutubeUtil.parseVideoId(url)).toBe(videoId)
+        expect(YoutubeUtil.parsePlaylistId(url)).toBe(playlistId)
+        expect(resolvePlayTarget(url)).toBe(target)
+    })
+})

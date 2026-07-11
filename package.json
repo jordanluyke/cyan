@@ -5,7 +5,8 @@
     "type": "module",
     "scripts": {
         "build": "node bin/build.js",
-        "start": "node target/main.js"
+        "start": "node target/main.js",
+        "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules npx jest"
     },
     "author": "Jordan Luyke",
     "license": "ISC",
@@ -27,6 +28,7 @@
     },
     "devDependencies": {
         "@types/fluent-ffmpeg": "2.1.28",
-        "@types/node": "26.1.1"
+        "@types/node": "26.1.1",
+        "jest": "30.4.2"
     }
 }
