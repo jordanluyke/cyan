@@ -30,5 +30,10 @@
         "@types/fluent-ffmpeg": "2.1.28",
         "@types/node": "26.1.1",
         "jest": "30.4.2"
+    },
+    "allowScripts": {
+        "@discordjs/opus@0.10.0": true,
+        "ffmpeg-static@5.3.0": true,
+        "youtube-dl-exec@3.1.9": true
     }
 }
