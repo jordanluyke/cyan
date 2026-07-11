@@ -16,53 +16,6 @@ import { GrokPrompt } from './model/grok-prompt.js'
 export class GrokManager {
     constructor(private config: Config) {}
 
-    public async ask(interaction: ChatInputCommandInteraction): Promise<void> {
-        this.requireApiKey()
-        const promptText = interaction.options.getString('prompt')?.trim() ?? ''
-        const attachment = interaction.options.getAttachment('image')
-        const imageUrls: string[] = []
-        if (attachment != null) {
-            if (!DiscordUtil.isSupportedImageAttachment(attachment)) {
-                throw new BotError(
-                    'unsupported image',
-                    'i can only look at jpeg/png images (max 20MB)'
-                )
-            }
-            imageUrls.push(attachment.url)
-        }
-
-        if (promptText.length === 0 && imageUrls.length === 0) {
-            await interaction.reply({
-                content:
-                    'try `/ask prompt:what even is calculus`\n' +
-                    'or `@` me in chat, attach an image, or right-click a message → **Ask Cyan**',
-                ephemeral: true,
-            })
-            return
-        }
-
-        await interaction.deferReply()
-        let asker = interaction.user.displayName
-        if (interaction.guild != null && interaction.member != null) {
-            const member = await DiscordUtil.resolveGuildMember(
-                interaction.guild,
-                interaction.member,
-                interaction.user.id
-            )
-            asker = member.displayName
-        }
-        const channel = interaction.channel as TextChannel
-        const prompt = await this.buildDirectPrompt({
-            channel,
-            guild: interaction.guild,
-            asker,
-            userPrompt: promptText,
-            imageUrls,
-        })
-        const response = await GrokUtil.chat(this.config.xaiApiKey!, prompt)
-        await this.sendInteractionResponse(interaction, response)
-    }
-
     public async askAboutMessage(
         interaction: MessageContextMenuCommandInteraction
     ): Promise<void> {

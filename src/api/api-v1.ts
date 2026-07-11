@@ -106,21 +106,6 @@ export class ApiV1 {
             ),
             new SlashCommand(
                 new SlashCommandBuilder()
-                    .setName('ask')
-                    .setDescription('Ask Cyan')
-                    .addStringOption((option) =>
-                        option.setName('prompt').setDescription('What to ask').setRequired(false)
-                    )
-                    .addAttachmentOption((option) =>
-                        option
-                            .setName('image')
-                            .setDescription('Optional image to look at')
-                            .setRequired(false)
-                    ),
-                Grok
-            ),
-            new SlashCommand(
-                new SlashCommandBuilder()
                     .setName('draw')
                     .setDescription('Ask Cyan to draw something')
                     .addStringOption((option) =>

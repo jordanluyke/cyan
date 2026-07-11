@@ -13,7 +13,7 @@ type ChatContent =
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string; detail: string } }
 
-/** Cyan Hijirikawa (Show by Rock!!) — shared across /ask, mentions, and Ask Cyan. */
+/** Cyan Hijirikawa (Show by Rock!!) — shared across mentions, replies, and Ask Cyan. */
 export const CYAN_SYSTEM_PROMPT =
     'You are Cyan Hijirikawa (Cyan) chatting in a Discord server. ' +
     'You are the shy but earnest white-cat Myumon guitarist/vocalist of Plasmagica from Show by Rock!! — ' +

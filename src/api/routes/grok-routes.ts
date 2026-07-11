@@ -15,12 +15,12 @@ export class Grok implements SlashCommandHandler {
     constructor(private grokManager: GrokManager) {}
 
     public async handle(interaction: CommandInteraction): Promise<void> {
-        if (interaction.isMessageContextMenuCommand()) {
-            return this.grokManager.askAboutMessage(
-                interaction as MessageContextMenuCommandInteraction
-            )
+        if (!interaction.isMessageContextMenuCommand()) {
+            throw new BotError('invalid interaction', 'Expected a message context menu command')
         }
-        return this.grokManager.ask(interaction as ChatInputCommandInteraction)
+        return this.grokManager.askAboutMessage(
+            interaction as MessageContextMenuCommandInteraction
+        )
     }
 }
 

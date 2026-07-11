@@ -37,7 +37,7 @@ export class ApiManager {
             .once('clientReady', async () => {
                 console.log('Ready')
                 client.user.setActivity({
-                    name: `/cyan | /ask | @me`,
+                    name: `/cyan | @me`,
                 })
                 try {
                     await client.application.commands.set(api.commands.map((c) => c.data.toJSON()))
@@ -70,7 +70,7 @@ export class ApiManager {
         const botId = message.client.user.id
         const mentionedInContent =
             message.content.includes(`<@${botId}>`) || message.content.includes(`<@!${botId}>`)
-        if (!mentionedInContent) return
+        if (!mentionedInContent && !(await this.isReplyToBot(message))) return
 
         const grokManager = container.resolve(GrokManager)
         try {
@@ -92,6 +92,16 @@ export class ApiManager {
                     await (message.channel as TextChannel).send(msg)
                 }
             }
+        }
+    }
+
+    private async isReplyToBot(message: Message): Promise<boolean> {
+        if (message.reference == null || message.client.user == null) return false
+        try {
+            const referenced = await message.fetchReference()
+            return referenced.author.id === message.client.user.id
+        } catch {
+            return false
         }
     }
 
