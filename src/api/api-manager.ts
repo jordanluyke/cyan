@@ -123,7 +123,11 @@ export class ApiManager {
                     ? 'Error: ' + err.sendMessage
                     : 'Something bad happened (˚ ˃̣̣̥⌓˂̣̣̥ )'
             try {
-                if (interaction.deferred || interaction.replied) {
+                if (interaction.deferred && !interaction.replied) {
+                    // Deferred replies must be edited; followUp leaves the public
+                    // "thinking…" message stuck forever (/draw, Ask Cyan, /play).
+                    await interaction.editReply({ content: msg })
+                } else if (interaction.replied) {
                     await interaction.followUp({ content: msg, ephemeral: true })
                 } else {
                     await interaction.reply({ content: msg, ephemeral: true })
