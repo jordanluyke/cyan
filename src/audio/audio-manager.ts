@@ -19,6 +19,7 @@ import { Readable } from 'stream'
 import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
 import { YoutubeUtil } from '../util/youtube-util.js'
+import { isPlayStillValid, shouldDequeueOnIdle } from './audio-play-guard.js'
 
 @injectable()
 export class AudioManager {
@@ -52,15 +53,29 @@ export class AudioManager {
 
     public async skip(guildId: string): Promise<boolean> {
         const botState = this.getBotStateOrCreate(guildId)
-        if (botState.audioQueueItems.length >= 1) {
+        if (botState.audioQueueItems.length == 0) return false
+
+        const status = botState.audioPlayer.state.status
+        if (status === AudioPlayerStatus.Playing || status === AudioPlayerStatus.Paused) {
+            // Idle handler dequeues the finished head and starts the next item.
             botState.audioPlayer.stop()
             return true
         }
-        return false
+
+        // Idle/Buffering: download in flight — stop() would not fire Idle.
+        botState.playEpoch++
+        botState.activePlayEpoch = null
+        botState.audioQueueItems = botState.audioQueueItems.slice(1)
+        if (botState.audioQueueItems.length >= 1) {
+            await this.playNextInQueue(guildId)
+        }
+        return true
     }
 
     public async stop(guildId: string): Promise<void> {
         const botState = this.getBotStateOrCreate(guildId)
+        botState.playEpoch++
+        botState.activePlayEpoch = null
         botState.audioQueueItems = []
         botState.audioPlayer.stop(true)
         const connection = getVoiceConnection(guildId)
@@ -101,7 +116,16 @@ export class AudioManager {
         if (botState.audioQueueItems.length == 0)
             throw new BotError('items empty', 'No items in queue')
         if (queueItems.length == 0) throw new BotError('queueItems empty', 'No item found in input')
+
+        // Invalidate in-flight downloads and prevent Idle from dequeuing the new head
+        // when stopping the track that is currently playing.
+        botState.playEpoch++
+        botState.activePlayEpoch = null
         botState.audioQueueItems[0] = queueItems[0]
+        const status = botState.audioPlayer.state.status
+        if (status === AudioPlayerStatus.Playing || status === AudioPlayerStatus.Paused) {
+            botState.audioPlayer.stop(true)
+        }
         await this.playNextInQueue(guildId)
         return queueItems[0]
     }
@@ -227,17 +251,62 @@ export class AudioManager {
         const pitchScaleInput = item.inputFlags.filter((flag) => flag.name == '-p')[0]?.value
         const pitchScale = typeof pitchScaleInput == 'string' ? parseFloat(pitchScaleInput) : null
 
+        const startedEpoch = ++botState.playEpoch
         console.log('Downloading:', item.title, item.getYoutubeUrl())
 
         this.getYoutubeVideo(item.videoId)
             .then((buffer) => {
-                if (pitchScale == null) return Promise.resolve(buffer)
+                if (
+                    !isPlayStillValid(
+                        startedEpoch,
+                        botState.playEpoch,
+                        botState.audioQueueItems[0],
+                        item
+                    )
+                ) {
+                    return null
+                }
+                if (pitchScale == null) return buffer
                 return FfmpegUtil.shift(buffer, pitchScale)
             })
             .then((buffer) => {
+                if (buffer == null) return
+                if (
+                    !isPlayStillValid(
+                        startedEpoch,
+                        botState.playEpoch,
+                        botState.audioQueueItems[0],
+                        item
+                    )
+                ) {
+                    return
+                }
                 console.log('Playing...')
+                botState.activePlayEpoch = startedEpoch
                 botState.audioPlayer.play(createAudioResource(Readable.from(buffer)))
                 voiceConnection?.subscribe(botState.audioPlayer)
+            })
+            .catch(async (error) => {
+                console.error('Download/play failed:', error)
+                if (
+                    !isPlayStillValid(
+                        startedEpoch,
+                        botState.playEpoch,
+                        botState.audioQueueItems[0],
+                        item
+                    )
+                ) {
+                    return
+                }
+                try {
+                    await item.sendMessage('Download fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
+                } catch (sendErr) {
+                    console.error('Failed to send download error message:', sendErr)
+                }
+                botState.audioQueueItems = botState.audioQueueItems.slice(1)
+                if (botState.audioQueueItems.length >= 1) {
+                    await this.playNextInQueue(guildId)
+                }
             })
     }
 
@@ -279,10 +348,19 @@ export class AudioManager {
         botState.audioPlayer
             .on('error', async (error) => {
                 console.error('Player error:', error)
-                if (botState.audioQueueItems.length == 0)
-                    throw new BotError('queue empty', 'Queue empty')
+                if (botState.audioQueueItems.length == 0) return
                 const item = botState.audioQueueItems[0]
-                await item.sendMessage('Audio stream fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
+                try {
+                    await item.sendMessage('Audio stream fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
+                } catch (sendErr) {
+                    console.error('Failed to send stream error message:', sendErr)
+                }
+                botState.playEpoch++
+                botState.activePlayEpoch = null
+                botState.audioQueueItems = botState.audioQueueItems.slice(1)
+                if (botState.audioQueueItems.length >= 1) {
+                    await this.playNextInQueue(guildId)
+                }
             })
             .on(AudioPlayerStatus.Buffering, async () => {
                 // console.log("Buffering")
@@ -300,6 +378,13 @@ export class AudioManager {
                     const voiceConnection = getVoiceConnection(guildId)
                     voiceConnection?.destroy()
                 }, TimeUnit.MINUTES.toMillis(30))
+
+                const finishedEpoch = botState.activePlayEpoch
+                botState.activePlayEpoch = null
+                if (!shouldDequeueOnIdle(finishedEpoch, botState.playEpoch)) {
+                    // stop/replace invalidated this play; do not touch the queue head.
+                    return
+                }
 
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
