@@ -8,6 +8,7 @@ import {
     CommandInteraction,
     SlashCommandHandler,
 } from '../model/slash-command-handler.js'
+import { BotError } from '../../audio/model/error/bot-error.js'
 
 @injectable()
 export class Grok implements SlashCommandHandler {
@@ -20,5 +21,17 @@ export class Grok implements SlashCommandHandler {
             )
         }
         return this.grokManager.ask(interaction as ChatInputCommandInteraction)
+    }
+}
+
+@injectable()
+export class Draw implements SlashCommandHandler {
+    constructor(private grokManager: GrokManager) {}
+
+    public async handle(interaction: CommandInteraction): Promise<void> {
+        if (!interaction.isChatInputCommand()) {
+            throw new BotError('invalid interaction', 'Expected a slash command')
+        }
+        return this.grokManager.draw(interaction as ChatInputCommandInteraction)
     }
 }

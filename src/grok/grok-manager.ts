@@ -126,6 +126,39 @@ export class GrokManager {
         }
     }
 
+    public async draw(interaction: ChatInputCommandInteraction): Promise<void> {
+        this.requireApiKey()
+        const promptText = interaction.options.getString('prompt', true).trim()
+        if (promptText.length === 0) {
+            throw new BotError('empty prompt', 'give me something to draw~')
+        }
+        const aspectRatio = interaction.options.getString('aspect')
+
+        await interaction.deferReply()
+        try {
+            const image = await GrokUtil.generateImage(
+                this.config.xaiApiKey!,
+                promptText,
+                aspectRatio
+            )
+            await interaction.editReply({
+                content: `here you go~`,
+                files: [
+                    {
+                        name: 'cyan-draw.png',
+                        attachment: image,
+                    },
+                ],
+            })
+        } catch (err) {
+            console.error('draw error:', err)
+            throw new BotError(
+                'image generation failed',
+                "couldn't draw that… try a different prompt?"
+            )
+        }
+    }
+
     private static readonly MAX_REPLY_CHAIN = 10
     private static readonly MAX_CHANNEL_CONTEXT = 15
     private static readonly MAX_CONTEXT_MSG_LENGTH = 300

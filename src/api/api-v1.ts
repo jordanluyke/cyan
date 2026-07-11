@@ -17,7 +17,7 @@ import {
 } from './routes/audio-routes.js'
 import { Commands } from './routes/misc-routes.js'
 import { DownloadMessages } from './routes/channel-routes.js'
-import { Grok } from './routes/grok-routes.js'
+import { Draw, Grok } from './routes/grok-routes.js'
 
 export class ApiV1 {
     constructor(
@@ -118,6 +118,31 @@ export class ApiV1 {
                             .setRequired(false)
                     ),
                 Grok
+            ),
+            new SlashCommand(
+                new SlashCommandBuilder()
+                    .setName('draw')
+                    .setDescription('Ask Cyan to draw something')
+                    .addStringOption((option) =>
+                        option
+                            .setName('prompt')
+                            .setDescription('What to draw')
+                            .setRequired(true)
+                    )
+                    .addStringOption((option) =>
+                        option
+                            .setName('aspect')
+                            .setDescription('Aspect ratio')
+                            .setRequired(false)
+                            .addChoices(
+                                { name: '1:1', value: '1:1' },
+                                { name: '16:9', value: '16:9' },
+                                { name: '9:16', value: '9:16' },
+                                { name: '4:3', value: '4:3' },
+                                { name: '3:4', value: '3:4' }
+                            )
+                    ),
+                Draw
             ),
             new SlashCommand(
                 new ContextMenuCommandBuilder()

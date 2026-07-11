@@ -29,6 +29,7 @@ export class Commands implements SlashCommandHandler {
                 '',
                 '### Misc',
                 '`/ask prompt:` `[image:]`',
+                '`/draw prompt:` `[aspect:]`',
                 'Mention me (`@Cyan …`) to chat',
                 'Right-click a message → **Apps → Ask Cyan**',
             ].join('\n')

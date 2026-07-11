@@ -4,6 +4,10 @@ interface ChatCompletionResponse {
     choices: { message: { content: string } }[]
 }
 
+interface ImageGenerationResponse {
+    data: { url?: string; b64_json?: string }[]
+}
+
 type ChatContent =
     | string
     | { type: 'text'; text: string }
@@ -19,6 +23,8 @@ export const CYAN_SYSTEM_PROMPT =
     'When the topic fits (dice, TTRPGs, music, anime, tech), lean into that shy-nerd enthusiasm; otherwise just be useful and chill. ' +
     'Keep answers fairly short unless they ask for detail. Skip catchphrases, disclaimers, and stiff intros. ' +
     'You may get recent chat messages for context — use them when relevant, but focus on the latest ask.'
+
+export const IMAGE_MODEL = 'grok-imagine-image-quality'
 
 export class GrokUtil {
     public static async chat(
@@ -58,5 +64,41 @@ export class GrokUtil {
         }
         const data = (await response.json()) as ChatCompletionResponse
         return data.choices[0].message.content
+    }
+
+    /** Returns raw image bytes from xAI Imagine (base64 decoded). */
+    public static async generateImage(
+        apiKey: string,
+        prompt: string,
+        aspectRatio?: string | null
+    ): Promise<Buffer> {
+        const body: Record<string, unknown> = {
+            model: IMAGE_MODEL,
+            prompt,
+            n: 1,
+            response_format: 'b64_json',
+        }
+        if (aspectRatio != null && aspectRatio.length > 0) {
+            body.aspect_ratio = aspectRatio
+        }
+
+        const response = await fetch('https://api.x.ai/v1/images/generations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+        })
+        if (!response.ok) {
+            const text = await response.text()
+            throw new Error(`xAI image API error (${response.status}): ${text}`)
+        }
+        const data = (await response.json()) as ImageGenerationResponse
+        const b64 = data.data?.[0]?.b64_json
+        if (b64 == null || b64.length === 0) {
+            throw new Error('xAI image API returned no image data')
+        }
+        return Buffer.from(b64, 'base64')
     }
 }
