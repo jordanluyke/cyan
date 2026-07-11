@@ -1,4 +1,4 @@
-import { Message, TextChannel } from 'discord.js'
+import { GuildMember, TextChannel } from 'discord.js'
 import { InputFlag } from './input-flag.js'
 
 const youtubeUrlPrefix = 'https://www.youtube.com/watch?v='
@@ -7,7 +7,8 @@ export class AudioQueueItem {
     constructor(
         public title: string,
         public videoId: string,
-        public message: Message,
+        public member: GuildMember,
+        public channel: TextChannel,
         public inputFlags: InputFlag[]
     ) {}
 
@@ -15,8 +16,11 @@ export class AudioQueueItem {
         return youtubeUrlPrefix + this.videoId
     }
 
+    public get requesterDisplayName(): string {
+        return this.member.displayName
+    }
+
     public async sendMessage(msg: string): Promise<void> {
-        const channel = this.message.channel as TextChannel
-        await channel.send(msg)
+        await this.channel.send(msg)
     }
 }

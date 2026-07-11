@@ -1,9 +1,40 @@
-import { Message } from 'discord.js'
+import { Attachment, Guild, GuildMember, Message, PermissionFlagsBits, SendableChannels } from 'discord.js'
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png'])
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const TYPING_REFRESH_MS = 8000
+const DEV_ROLE_NAME = 'dev'
 
 export class DiscordUtil {
+    /** Keeps the typing indicator alive until the returned stop fn is called. */
+    public static startTyping(channel: SendableChannels): () => void {
+        let stopped = false
+        const send = () => {
+            if (!stopped) void channel.sendTyping().catch(() => {})
+        }
+        send()
+        const interval = setInterval(send, TYPING_REFRESH_MS)
+        return () => {
+            stopped = true
+            clearInterval(interval)
+        }
+    }
+
+    public static isAdminOrDev(member: GuildMember): boolean {
+        if (member.permissions.has(PermissionFlagsBits.Administrator)) return true
+        return member.roles.cache.some((role) => role.name.toLowerCase() === DEV_ROLE_NAME)
+    }
+
+    /** Resolves a full GuildMember even when the interaction only has a partial member payload. */
+    public static async resolveGuildMember(
+        guild: Guild,
+        member: GuildMember | object | null,
+        userId: string
+    ): Promise<GuildMember> {
+        if (member instanceof GuildMember) return member
+        return guild.members.fetch(userId)
+    }
+
     public static splitMessage(text: string, maxLength = 2000): string[] {
         if (text.length <= maxLength) return [text]
         const chunks: string[] = []
@@ -55,18 +86,23 @@ export class DiscordUtil {
         return urls
     }
 
+    public static isSupportedImageAttachment(attachment: Attachment): boolean {
+        if (attachment.size > MAX_IMAGE_BYTES) return false
+        return this.isSupportedImage(attachment.contentType, attachment.name)
+    }
+
     public static hasMessageContent(message: Message): boolean {
         return this.getMessageText(message).length > 0 || this.getMessageImages(message).length > 0
     }
 
     public static async getMemberDisplayName(
-        contextMessage: Message,
+        guild: Guild | null,
         targetMessage: Message
     ): Promise<string> {
         if (targetMessage.member != null) return targetMessage.member.displayName
-        if (contextMessage.guild != null) {
+        if (guild != null) {
             try {
-                const member = await contextMessage.guild.members.fetch(targetMessage.author.id)
+                const member = await guild.members.fetch(targetMessage.author.id)
                 return member.displayName
             } catch {}
         }
@@ -85,7 +121,11 @@ export class DiscordUtil {
     private static isSupportedImageUrl(url: string): boolean {
         try {
             const pathname = new URL(url).pathname.toLowerCase()
-            return pathname.endsWith('.jpg') || pathname.endsWith('.jpeg') || pathname.endsWith('.png')
+            return (
+                pathname.endsWith('.jpg') ||
+                pathname.endsWith('.jpeg') ||
+                pathname.endsWith('.png')
+            )
         } catch {
             return false
         }
