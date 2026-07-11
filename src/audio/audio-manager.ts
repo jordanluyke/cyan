@@ -142,7 +142,11 @@ export class AudioManager {
         const input = remainingArgs[0]
 
         if (YoutubeUtil.isYoutubeUrl(input)) {
-            const playlistId = YoutubeUtil.parsePlaylistId(input)
+            // Prefer a concrete video id when present. Copied watch URLs often include
+            // list= (mix/playlist context); treating those as playlists queues dozens of
+            // unintended tracks. Pure playlist URLs have list= without v=.
+            const videoId = YoutubeUtil.parseVideoId(input)
+            const playlistId = videoId == null ? YoutubeUtil.parsePlaylistId(input) : null
             if (playlistId != null) {
                 const res = await youtube.playlistItems.list({
                     maxResults: 50,
@@ -158,14 +162,14 @@ export class AudioManager {
                     if (title == null) throw new BotError('title null', 'Title not found')
                     if (item.snippet.resourceId == null)
                         throw new BotError('resourceId null', 'resourceId not found')
-                    const videoId = item.snippet.resourceId.videoId
-                    if (videoId == null) throw new BotError('videoId null', 'videoId not found')
+                    const playlistVideoId = item.snippet.resourceId.videoId
+                    if (playlistVideoId == null)
+                        throw new BotError('videoId null', 'videoId not found')
                     if (voiceChannel == null)
                         throw new BotError('voiceChannel null', 'Voice channel not found')
-                    return new AudioQueueItem(title, videoId, message, inputFlags)
+                    return new AudioQueueItem(title, playlistVideoId, message, inputFlags)
                 })
             } else {
-                const videoId = YoutubeUtil.parseVideoId(input)
                 if (videoId == null) throw new BotError('Invalid url', 'Invalid YouTube url')
                 const res = await youtube.videos.list({
                     part: ['snippet'],

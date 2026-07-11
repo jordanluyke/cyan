@@ -17,6 +17,8 @@ export class YoutubeUtil {
                 return videoId || null
             }
             if (host.endsWith('youtube.com')) {
+                const pathId = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?#]+)/)
+                if (pathId?.[1]) return pathId[1]
                 return url.searchParams.get('v')
             }
         } catch {
