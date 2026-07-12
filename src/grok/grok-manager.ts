@@ -31,7 +31,7 @@ export class GrokManager {
         }
 
         const response = await GrokUtil.chat(this.config.xaiApiKey!, prompt)
-        await this.sendInteractionResponse(interaction, response)
+        await this.sendInteractionResponse(interaction, response.text, response.images)
     }
 
     public async askFromMention(message: Message): Promise<void> {
@@ -73,7 +73,7 @@ export class GrokManager {
         const stopTyping = DiscordUtil.startTyping(channel)
         try {
             const response = await GrokUtil.chat(this.config.xaiApiKey!, prompt)
-            await this.sendMessageResponse(message, response)
+            await this.sendMessageResponse(message, response.text, response.images)
         } finally {
             stopTyping()
         }
@@ -171,9 +171,11 @@ export class GrokManager {
 
         if (chain.length === 0) return null
 
-        const referencedMessage = chain[chain.length - 1]
-        const referencedImages = DiscordUtil.getMessageImages(referencedMessage)
-        const imageUrls = [...referencedImages, ...(opts?.extraImageUrls ?? [])]
+        // Newest first so edit_image defaults to the image being replied to.
+        const chainImageUrls = [...chain]
+            .reverse()
+            .flatMap((m) => DiscordUtil.getMessageImages(m))
+        const imageUrls = [...chainImageUrls, ...(opts?.extraImageUrls ?? [])]
         const hasChainText = chain.some((m) => DiscordUtil.getMessageText(m).length > 0)
         if (!hasChainText && imageUrls.length === 0 && userPrompt.length === 0) {
             return null
@@ -186,12 +188,14 @@ export class GrokManager {
                 start.guild,
                 chainMessage
             )
+            const msgImages = DiscordUtil.getMessageImages(chainMessage)
             if (content.length > 0) {
-                parts.push(`${displayName} said:\n${content}`)
-            } else if (
-                chainMessage.id === referencedMessage.id &&
-                referencedImages.length > 0
-            ) {
+                parts.push(
+                    msgImages.length > 0
+                        ? `${displayName} said (with pic):\n${content}`
+                        : `${displayName} said:\n${content}`
+                )
+            } else if (msgImages.length > 0) {
                 parts.push(`${displayName} sent a pic`)
             }
         }
@@ -267,19 +271,61 @@ export class GrokManager {
 
     private async sendInteractionResponse(
         interaction: ChatInputCommandInteraction | MessageContextMenuCommandInteraction,
-        response: string
+        response: string,
+        images: Buffer[] = []
     ): Promise<void> {
-        const chunks = DiscordUtil.splitMessage(response)
-        await interaction.editReply({ content: chunks[0] })
+        const files = images.map((attachment, i) => ({
+            name: images.length === 1 ? 'cyan-draw.png' : `cyan-draw-${i + 1}.png`,
+            attachment,
+        }))
+        const chunks =
+            response.length > 0
+                ? DiscordUtil.splitMessage(response)
+                : files.length > 0
+                  ? []
+                  : ['…']
+
+        if (chunks.length === 0) {
+            await interaction.editReply({ files })
+            return
+        }
+
+        await interaction.editReply({
+            content: chunks[0],
+            ...(files.length > 0 ? { files } : {}),
+        })
         for (const chunk of chunks.slice(1)) {
             await interaction.followUp({ content: chunk })
         }
     }
 
-    private async sendMessageResponse(message: Message, response: string): Promise<void> {
+    private async sendMessageResponse(
+        message: Message,
+        response: string,
+        images: Buffer[] = []
+    ): Promise<void> {
         const channel = message.channel as TextChannel
-        const chunks = DiscordUtil.splitMessage(response)
-        await message.reply({ content: chunks[0], allowedMentions: { repliedUser: false } })
+        const files = images.map((attachment, i) => ({
+            name: images.length === 1 ? 'cyan-draw.png' : `cyan-draw-${i + 1}.png`,
+            attachment,
+        }))
+        const chunks =
+            response.length > 0
+                ? DiscordUtil.splitMessage(response)
+                : files.length > 0
+                  ? []
+                  : ['…']
+
+        if (chunks.length === 0) {
+            await message.reply({ files, allowedMentions: { repliedUser: false } })
+            return
+        }
+
+        await message.reply({
+            content: chunks[0],
+            ...(files.length > 0 ? { files } : {}),
+            allowedMentions: { repliedUser: false },
+        })
         for (const chunk of chunks.slice(1)) {
             await channel.send(chunk)
         }
