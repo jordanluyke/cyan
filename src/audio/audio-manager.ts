@@ -10,7 +10,7 @@ import {
 } from '@discordjs/voice'
 import youtubedl from 'youtube-dl-exec'
 import { ClientUser, GuildMember, PermissionFlagsBits, TextChannel } from 'discord.js'
-import { youtube_v3 } from 'googleapis'
+import { youtube_v3 } from '@googleapis/youtube'
 import { BotStateManager } from '../bot-state/bot-state-manager.js'
 import { BotState } from '../bot-state/model/bot-state.js'
 import { TimeUnit } from '../util/time-unit.js'
@@ -209,8 +209,9 @@ export class AudioManager {
             const res = await youtube.search.list({
                 part: ['snippet'],
                 q: trimmed,
+                type: ['video'],
                 regionCode: 'US',
-                safeSearch: 'moderate',
+                safeSearch: 'none',
             })
             const items = res.data.items
             if (items == null) throw new BotError('items null', 'No search results found')
@@ -313,13 +314,22 @@ export class AudioManager {
     private getYoutubeVideo(videoId: string): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
-            const subprocess = youtubedl.exec(`https://www.youtube.com/watch?v=${videoId}`, {
-                output: '-',
-                format: 'bestaudio[acodec=opus]/bestaudio/best',
-                formatSort: ['abr'],
-                quiet: true,
-                noWarnings: true,
-            })
+            // reject: false — tinyspawn also returns a Promise; without this a non-zero
+            // exit becomes an unhandled rejection and kills the process.
+            const subprocess = youtubedl.exec(
+                `https://www.youtube.com/watch?v=${videoId}`,
+                {
+                    output: '-',
+                    format: 'bestaudio[acodec=opus]/bestaudio/best',
+                    formatSort: ['abr'],
+                    // Prefer android client; default web client often 403s on media URLs.
+                    // Not in youtube-dl-exec Flags typings yet.
+                    extractorArgs: 'youtube:player_client=android',
+                    quiet: true,
+                    noWarnings: true,
+                } as Parameters<typeof youtubedl.exec>[1],
+                { reject: false } as Parameters<typeof youtubedl.exec>[2]
+            )
             subprocess.stdout.on('data', (chunk: Buffer) => {
                 chunks.push(chunk)
             })
