@@ -95,7 +95,6 @@ export class GrokManager {
                 aspectRatio
             )
             await interaction.editReply({
-                content: `here you go~`,
                 files: [
                     {
                         name: 'cyan-draw.png',
