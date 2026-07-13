@@ -23,3 +23,24 @@ export function shouldDequeueOnIdle(
 ): boolean {
     return activePlayEpoch != null && activePlayEpoch === playEpoch
 }
+
+/**
+ * Skip/replace must stop the player whenever a resource is already committed
+ * (Playing, Paused, or Buffering). Buffering is not "download in flight" —
+ * the AudioPlayer already owns a resource and will reach Playing without stop().
+ */
+export function shouldStopPlayerForSkip(status: string): boolean {
+    return status === 'playing' || status === 'paused' || status === 'buffering'
+}
+
+/**
+ * Queue advance should keep using an existing guild voice connection even if
+ * the original requester left VC. Only skip the head when we would need to
+ * join and have no channel to join.
+ */
+export function shouldSkipQueueItemForVoice(
+    hasExistingConnection: boolean,
+    requesterInVoice: boolean
+): boolean {
+    return !hasExistingConnection && !requesterInVoice
+}

@@ -19,7 +19,12 @@ import { Readable } from 'stream'
 import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
 import { YoutubeUtil } from '../util/youtube-util.js'
-import { isPlayStillValid, shouldDequeueOnIdle } from './audio-play-guard.js'
+import {
+    isPlayStillValid,
+    shouldDequeueOnIdle,
+    shouldSkipQueueItemForVoice,
+    shouldStopPlayerForSkip,
+} from './audio-play-guard.js'
 
 @injectable()
 export class AudioManager {
@@ -56,13 +61,14 @@ export class AudioManager {
         if (botState.audioQueueItems.length == 0) return false
 
         const status = botState.audioPlayer.state.status
-        if (status === AudioPlayerStatus.Playing || status === AudioPlayerStatus.Paused) {
+        if (shouldStopPlayerForSkip(status)) {
             // Idle handler dequeues the finished head and starts the next item.
+            // Includes Buffering: player already owns a resource (not download-in-flight).
             botState.audioPlayer.stop()
             return true
         }
 
-        // Idle/Buffering: download in flight — stop() would not fire Idle.
+        // Idle: download in flight — stop() would not fire Idle.
         botState.playEpoch++
         botState.activePlayEpoch = null
         botState.audioQueueItems = botState.audioQueueItems.slice(1)
@@ -123,7 +129,7 @@ export class AudioManager {
         botState.activePlayEpoch = null
         botState.audioQueueItems[0] = queueItems[0]
         const status = botState.audioPlayer.state.status
-        if (status === AudioPlayerStatus.Playing || status === AudioPlayerStatus.Paused) {
+        if (shouldStopPlayerForSkip(status)) {
             botState.audioPlayer.stop(true)
         }
         await this.playNextInQueue(guildId)
@@ -236,15 +242,33 @@ export class AudioManager {
         if (botState.audioQueueItems.length == 0) throw new BotError('queue empty', 'Queue empty')
         const item = botState.audioQueueItems[0]
         const voiceChannel = item.member.voice.channel
-        if (voiceChannel == null)
-            throw new BotError('voiceChannel null', 'Are you in a voice channel?')
-        let voiceConnection = getVoiceConnection(voiceChannel.guild.id)
+        let voiceConnection = getVoiceConnection(guildId)
+        if (
+            shouldSkipQueueItemForVoice(voiceConnection != null, voiceChannel != null)
+        ) {
+            // Background advance (Idle / download fail / player error) must not throw —
+            // an unhandled rejection can kill the process and stalls the rest of the queue.
+            console.error('Skipping queue item; requester left voice and bot is not connected')
+            try {
+                await item.sendMessage("can't play — nobody's in voice (˚ ˃̣̣̥⌓˂̣̣̥ )")
+            } catch (sendErr) {
+                console.error('Failed to send voice-channel error message:', sendErr)
+            }
+            botState.playEpoch++
+            botState.activePlayEpoch = null
+            botState.audioQueueItems = botState.audioQueueItems.slice(1)
+            if (botState.audioQueueItems.length >= 1) {
+                await this.playNextInQueue(guildId)
+            }
+            return
+        }
         if (voiceConnection == null) {
+            // Requester is in voice (guarded above); join their channel.
             voiceConnection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: voiceChannel.guild.id,
+                channelId: voiceChannel!.id,
+                guildId: voiceChannel!.guild.id,
                 adapterCreator: <DiscordGatewayAdapterCreator>(
-                    voiceChannel.guild.voiceAdapterCreator
+                    voiceChannel!.guild.voiceAdapterCreator
                 ),
             })
         }
@@ -306,7 +330,11 @@ export class AudioManager {
                 }
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
-                    await this.playNextInQueue(guildId)
+                    try {
+                        await this.playNextInQueue(guildId)
+                    } catch (advanceErr) {
+                        console.error('Failed to advance queue after download error:', advanceErr)
+                    }
                 }
             })
     }
@@ -369,7 +397,11 @@ export class AudioManager {
                 botState.activePlayEpoch = null
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
-                    await this.playNextInQueue(guildId)
+                    try {
+                        await this.playNextInQueue(guildId)
+                    } catch (advanceErr) {
+                        console.error('Failed to advance queue after player error:', advanceErr)
+                    }
                 }
             })
             .on(AudioPlayerStatus.Buffering, async () => {
@@ -398,7 +430,11 @@ export class AudioManager {
 
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
-                    await this.playNextInQueue(guildId)
+                    try {
+                        await this.playNextInQueue(guildId)
+                    } catch (advanceErr) {
+                        console.error('Failed to advance queue after idle:', advanceErr)
+                    }
                 }
             })
             .on('unsubscribe', () => {

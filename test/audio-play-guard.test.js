@@ -1,4 +1,9 @@
-import { isPlayStillValid, shouldDequeueOnIdle } from '../target/audio/audio-play-guard.js'
+import {
+    isPlayStillValid,
+    shouldDequeueOnIdle,
+    shouldSkipQueueItemForVoice,
+    shouldStopPlayerForSkip,
+} from '../target/audio/audio-play-guard.js'
 
 describe('audio-play-guard', () => {
     test('rejects stale downloads after epoch bump (skip/stop/replace)', () => {
@@ -17,5 +22,20 @@ describe('audio-play-guard', () => {
         expect(shouldDequeueOnIdle(3, 3)).toBe(true)
         expect(shouldDequeueOnIdle(null, 3)).toBe(false)
         expect(shouldDequeueOnIdle(2, 3)).toBe(false)
+    })
+
+    test('skip/replace stops player while buffering, not only playing/paused', () => {
+        expect(shouldStopPlayerForSkip('playing')).toBe(true)
+        expect(shouldStopPlayerForSkip('paused')).toBe(true)
+        expect(shouldStopPlayerForSkip('buffering')).toBe(true)
+        expect(shouldStopPlayerForSkip('idle')).toBe(false)
+        expect(shouldStopPlayerForSkip('autopaused')).toBe(false)
+    })
+
+    test('queue advance keeps existing connection when requester left VC', () => {
+        expect(shouldSkipQueueItemForVoice(true, false)).toBe(false)
+        expect(shouldSkipQueueItemForVoice(true, true)).toBe(false)
+        expect(shouldSkipQueueItemForVoice(false, true)).toBe(false)
+        expect(shouldSkipQueueItemForVoice(false, false)).toBe(true)
     })
 })
