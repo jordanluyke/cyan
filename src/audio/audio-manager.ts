@@ -254,6 +254,19 @@ export class AudioManager {
             } catch (sendErr) {
                 console.error('Failed to send voice-channel error message:', sendErr)
             }
+            // skip/stop/replace may have mutated the queue while we awaited Discord.
+            if (botState.audioQueueItems[0] !== item) return
+            voiceConnection = getVoiceConnection(guildId)
+            if (
+                !shouldSkipQueueItemForVoice(
+                    voiceConnection != null,
+                    item.member.voice.channel != null
+                )
+            ) {
+                // Connection or requester voice became available — play instead of skipping.
+                await this.playNextInQueue(guildId)
+                return
+            }
             botState.playEpoch++
             botState.activePlayEpoch = null
             botState.audioQueueItems = botState.audioQueueItems.slice(1)
@@ -328,6 +341,19 @@ export class AudioManager {
                 } catch (sendErr) {
                     console.error('Failed to send download error message:', sendErr)
                 }
+                // skip/stop/replace may have mutated the queue while we awaited Discord.
+                if (
+                    !isPlayStillValid(
+                        startedEpoch,
+                        botState.playEpoch,
+                        botState.audioQueueItems[0],
+                        item
+                    )
+                ) {
+                    return
+                }
+                botState.playEpoch++
+                botState.activePlayEpoch = null
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
                     try {
@@ -385,6 +411,9 @@ export class AudioManager {
         const botState = this.botStateManager.getStateOrThrow(guildId)
         botState.audioPlayer
             .on('error', async (error) => {
+                // @discordjs/voice emits `error` then immediately transitions to Idle.
+                // Only notify here — Idle dequeues the failed head. Dequeuing in both
+                // handlers races across the await below and drops an extra queued track.
                 console.error('Player error:', error)
                 if (botState.audioQueueItems.length == 0) return
                 const item = botState.audioQueueItems[0]
@@ -392,16 +421,6 @@ export class AudioManager {
                     await item.sendMessage('Audio stream fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
                 } catch (sendErr) {
                     console.error('Failed to send stream error message:', sendErr)
-                }
-                botState.playEpoch++
-                botState.activePlayEpoch = null
-                botState.audioQueueItems = botState.audioQueueItems.slice(1)
-                if (botState.audioQueueItems.length >= 1) {
-                    try {
-                        await this.playNextInQueue(guildId)
-                    } catch (advanceErr) {
-                        console.error('Failed to advance queue after player error:', advanceErr)
-                    }
                 }
             })
             .on(AudioPlayerStatus.Buffering, async () => {
