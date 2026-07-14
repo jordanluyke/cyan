@@ -44,3 +44,13 @@ export function shouldSkipQueueItemForVoice(
 ): boolean {
     return !hasExistingConnection && !requesterInVoice
 }
+
+/**
+ * @discordjs/voice emits `error` then immediately transitions to Idle in the
+ * same turn. Only Idle should dequeue the failed head. If the error handler
+ * also dequeues (especially after an await), Idle removes one track and the
+ * error handler removes the next — a single stream failure skips two songs.
+ */
+export function shouldAdvanceQueueFromPlayerErrorHandler(): boolean {
+    return false
+}

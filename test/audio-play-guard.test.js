@@ -1,5 +1,6 @@
 import {
     isPlayStillValid,
+    shouldAdvanceQueueFromPlayerErrorHandler,
     shouldDequeueOnIdle,
     shouldSkipQueueItemForVoice,
     shouldStopPlayerForSkip,
@@ -37,5 +38,27 @@ describe('audio-play-guard', () => {
         expect(shouldSkipQueueItemForVoice(true, true)).toBe(false)
         expect(shouldSkipQueueItemForVoice(false, true)).toBe(false)
         expect(shouldSkipQueueItemForVoice(false, false)).toBe(true)
+    })
+
+    test('player error handler must not dequeue; Idle owns queue advance', () => {
+        expect(shouldAdvanceQueueFromPlayerErrorHandler()).toBe(false)
+
+        // Simulate error-then-Idle: both dequeuing drops an extra track.
+        const queue = ['a', 'b', 'c']
+        const errorHandlerDequeues = shouldAdvanceQueueFromPlayerErrorHandler()
+        const idleDequeues = shouldDequeueOnIdle(1, 1)
+        if (errorHandlerDequeues) queue.shift()
+        if (idleDequeues) queue.shift()
+        expect(queue).toEqual(['b', 'c'])
+    })
+
+    test('download-fail recheck rejects after skip bumps epoch during await', () => {
+        const item = { id: 'a' }
+        const startedEpoch = 1
+        // Before await: still valid
+        expect(isPlayStillValid(startedEpoch, 1, item, item)).toBe(true)
+        // During await, /skip bumps playEpoch and replaces head
+        const afterSkipHead = { id: 'b' }
+        expect(isPlayStillValid(startedEpoch, 2, afterSkipHead, item)).toBe(false)
     })
 })
