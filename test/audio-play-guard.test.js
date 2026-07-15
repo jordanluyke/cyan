@@ -3,6 +3,7 @@ import {
     shouldAdvanceQueueFromPlayerErrorHandler,
     shouldDequeueOnIdle,
     shouldSkipQueueItemForVoice,
+    shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
 } from '../target/audio/audio-play-guard.js'
 
@@ -60,5 +61,16 @@ describe('audio-play-guard', () => {
         // During await, /skip bumps playEpoch and replaces head
         const afterSkipHead = { id: 'b' }
         expect(isPlayStillValid(startedEpoch, 2, afterSkipHead, item)).toBe(false)
+    })
+
+    test('play only starts playback when enqueueing onto an empty queue', () => {
+        expect(shouldStartPlaybackOnEnqueue(0, 1)).toBe(true)
+        expect(shouldStartPlaybackOnEnqueue(0, 3)).toBe(true)
+        // Empty search / no results — must not call playNextInQueue
+        expect(shouldStartPlaybackOnEnqueue(0, 0)).toBe(false)
+        expect(shouldStartPlaybackOnEnqueue(2, 0)).toBe(false)
+        // Queue already has a head (playing, buffering, or download in flight)
+        expect(shouldStartPlaybackOnEnqueue(1, 1)).toBe(false)
+        expect(shouldStartPlaybackOnEnqueue(3, 2)).toBe(false)
     })
 })
