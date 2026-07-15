@@ -23,6 +23,7 @@ import {
     isPlayStillValid,
     shouldDequeueOnIdle,
     shouldSkipQueueItemForVoice,
+    shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
 } from './audio-play-guard.js'
 
@@ -42,10 +43,12 @@ export class AudioManager {
     ): Promise<AudioQueueItem[]> {
         const botState = this.getBotStateOrCreate(guildId)
         const queueItems = await this.buildQueueItemsFromInput(member, channel, query, pitch)
+        const previousQueueLength = botState.audioQueueItems.length
         botState.audioQueueItems = botState.audioQueueItems.concat(queueItems)
-        const status = botState.audioPlayer.state.status
-        // Queue while paused/playing; only start playback when idle.
-        if (status !== AudioPlayerStatus.Playing && status !== AudioPlayerStatus.Paused) {
+        // Only start when the queue was empty. Empty search results must not call
+        // playNextInQueue (throws "Queue empty"), and enqueue while Idle/Buffering
+        // must not restart the head already downloading or committed.
+        if (shouldStartPlaybackOnEnqueue(previousQueueLength, queueItems.length)) {
             await this.playNextInQueue(guildId)
         }
         return queueItems

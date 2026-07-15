@@ -54,3 +54,16 @@ export function shouldSkipQueueItemForVoice(
 export function shouldAdvanceQueueFromPlayerErrorHandler(): boolean {
     return false
 }
+
+/**
+ * `/play` should only kick `playNextInQueue` when the queue was empty before
+ * enqueue. Calling it for an empty result set throws "Queue empty" to the user
+ * instead of "No search results". Calling it while Idle/Buffering with an
+ * existing head restarts the current download/track.
+ */
+export function shouldStartPlaybackOnEnqueue(
+    previousQueueLength: number,
+    newItemCount: number
+): boolean {
+    return newItemCount > 0 && previousQueueLength === 0
+}
