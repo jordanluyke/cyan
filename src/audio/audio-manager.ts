@@ -22,6 +22,7 @@ import { YoutubeUtil } from '../util/youtube-util.js'
 import {
     isPlayStillValid,
     shouldDequeueOnIdle,
+    shouldScheduleVoiceIdleDisconnect,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
@@ -83,6 +84,7 @@ export class AudioManager {
 
     public async stop(guildId: string): Promise<void> {
         const botState = this.getBotStateOrCreate(guildId)
+        this.clearVoiceIdleTimeout(botState)
         botState.playEpoch++
         botState.activePlayEpoch = null
         botState.audioQueueItems = []
@@ -240,8 +242,18 @@ export class AudioManager {
         return queueItems
     }
 
+    private clearVoiceIdleTimeout(botState: BotState): void {
+        if (botState.idleTimeout != null) {
+            clearTimeout(botState.idleTimeout)
+            botState.idleTimeout = undefined
+        }
+    }
+
     private async playNextInQueue(guildId: string): Promise<void> {
         const botState = this.botStateManager.getStateOrThrow(guildId)
+        // Cancel a leave timer from a prior empty-queue Idle — download may take
+        // longer than the remaining window, and destroy() would orphan playback.
+        this.clearVoiceIdleTimeout(botState)
         if (botState.audioQueueItems.length == 0) throw new BotError('queue empty', 'Queue empty')
         const item = botState.audioQueueItems[0]
         const voiceChannel = item.member.voice.channel
@@ -430,7 +442,7 @@ export class AudioManager {
                 // console.log("Buffering")
             })
             .on(AudioPlayerStatus.Playing, async () => {
-                if (botState.idleTimeout != null) clearTimeout(botState.idleTimeout)
+                this.clearVoiceIdleTimeout(botState)
                 // console.log("Playing")
             })
             .on(AudioPlayerStatus.Paused, async () => {
@@ -438,11 +450,6 @@ export class AudioManager {
             })
             .on(AudioPlayerStatus.Idle, async () => {
                 // console.log("Idle")
-                botState.idleTimeout = setTimeout(() => {
-                    const voiceConnection = getVoiceConnection(guildId)
-                    voiceConnection?.destroy()
-                }, TimeUnit.MINUTES.toMillis(30))
-
                 const finishedEpoch = botState.activePlayEpoch
                 botState.activePlayEpoch = null
                 if (!shouldDequeueOnIdle(finishedEpoch, botState.playEpoch)) {
@@ -457,6 +464,16 @@ export class AudioManager {
                     } catch (advanceErr) {
                         console.error('Failed to advance queue after idle:', advanceErr)
                     }
+                    return
+                }
+
+                // Nothing left to play — leave voice after idle grace period.
+                if (shouldScheduleVoiceIdleDisconnect(botState.audioQueueItems.length)) {
+                    this.clearVoiceIdleTimeout(botState)
+                    botState.idleTimeout = setTimeout(() => {
+                        const voiceConnection = getVoiceConnection(guildId)
+                        voiceConnection?.destroy()
+                    }, TimeUnit.MINUTES.toMillis(30))
                 }
             })
             .on('unsubscribe', () => {
