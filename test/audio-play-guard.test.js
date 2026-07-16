@@ -2,6 +2,7 @@ import {
     isPlayStillValid,
     shouldAdvanceQueueFromPlayerErrorHandler,
     shouldDequeueOnIdle,
+    shouldScheduleVoiceIdleDisconnect,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
@@ -72,5 +73,22 @@ describe('audio-play-guard', () => {
         // Queue already has a head (playing, buffering, or download in flight)
         expect(shouldStartPlaybackOnEnqueue(1, 1)).toBe(false)
         expect(shouldStartPlaybackOnEnqueue(3, 2)).toBe(false)
+    })
+
+    test('voice leave timer only after Idle leaves the queue empty', () => {
+        // Still have tracks — advancing must not schedule destroy()
+        expect(shouldScheduleVoiceIdleDisconnect(1)).toBe(false)
+        expect(shouldScheduleVoiceIdleDisconnect(3)).toBe(false)
+        // Truly idle — safe to leave after grace period
+        expect(shouldScheduleVoiceIdleDisconnect(0)).toBe(true)
+
+        // Prior empty-queue timer + late /play: clear on play start, schedule
+        // only once the new session empties again.
+        let leaveScheduled = shouldScheduleVoiceIdleDisconnect(0)
+        expect(leaveScheduled).toBe(true)
+        // /play starts playNextInQueue → must clear pending leave (not tested
+        // here) and must not reschedule while downloading the new head.
+        leaveScheduled = shouldScheduleVoiceIdleDisconnect(1)
+        expect(leaveScheduled).toBe(false)
     })
 })

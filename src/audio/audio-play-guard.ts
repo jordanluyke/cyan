@@ -67,3 +67,13 @@ export function shouldStartPlaybackOnEnqueue(
 ): boolean {
     return newItemCount > 0 && previousQueueLength === 0
 }
+
+/**
+ * After Idle dequeues the finished head, only schedule the voice leave timer
+ * when nothing remains. Scheduling it while the next download is starting lets
+ * a prior empty-queue timer (or one set mid-advance) destroy the connection
+ * before the new track reaches Playing — silent no-audio failure.
+ */
+export function shouldScheduleVoiceIdleDisconnect(queueLengthAfterDequeue: number): boolean {
+    return queueLengthAfterDequeue === 0
+}
