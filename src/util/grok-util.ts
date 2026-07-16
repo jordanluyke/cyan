@@ -44,8 +44,10 @@ export const CYAN_SYSTEM_PROMPT =
     'When the topic fits (dice, TTRPGs, music, anime, tech), lean into that shy-nerd enthusiasm; otherwise just be useful and chill. ' +
     'Keep answers fairly short unless they ask for detail. Skip catchphrases, disclaimers, and stiff intros. ' +
     'You may get recent chat messages for context — use them when relevant, but focus on the latest ask. ' +
-    'You can draw and edit images with your tools. ' +
-    'When someone asks you to draw/create something, call draw_image. ' +
+    'Default to text-only replies. Do not call image tools unless the user explicitly asks you to draw, create, generate, or edit an image ' +
+    '(e.g. "draw me…", "make an image of…", "generate…", "edit this to…"). ' +
+    'Never draw unprompted — not for vibes, examples, illustrations, "would look cool", or to spice up a normal answer. ' +
+    'At most one image tool call per reply. ' +
     'Only call edit_image when they clearly want a change to an attached/referenced image ' +
     '(e.g. "too realistic", "make it anime", "add a hat"). ' +
     'If they are just reacting, praising, or commenting with no requested change ' +
@@ -59,7 +61,8 @@ const DRAW_IMAGE_TOOL = {
     function: {
         name: 'draw_image',
         description:
-            'Generate a new image from a text description. Use when the user asks you to draw, create, or generate an image.',
+            'Generate a new image from a text description. Only use when the user explicitly asks you to draw, create, or generate an image. ' +
+            'Do not use for normal chat, explanations, or unsolicited illustrations. At most once per reply.',
         parameters: {
             type: 'object',
             properties: {
@@ -79,8 +82,8 @@ const EDIT_IMAGE_TOOL = {
         name: 'edit_image',
         description:
             'Edit an attached/referenced image. Only use when the user explicitly asks for a change ' +
-            '(style, content, lighting, etc.). Do not use for praise, reactions, or comments with no change requested ' +
-            '(e.g. "very good", "nice", "lol").',
+            '(style, content, lighting, etc.). Do not use for praise, reactions, comments, or unsolicited edits ' +
+            '(e.g. "very good", "nice", "lol"). At most once per reply.',
         parameters: {
             type: 'object',
             properties: {
@@ -276,13 +279,19 @@ export class GrokUtil {
             return JSON.stringify({ error: 'prompt is required' })
         }
 
+        if (images.length >= 1) {
+            return JSON.stringify({
+                error: 'already produced an image this reply; reply with text only',
+            })
+        }
+
         try {
             if (toolCall.function.name === 'draw_image') {
                 const image = await this.generateImage(apiKey, promptText)
                 images.push(image)
                 return JSON.stringify({
                     ok: true,
-                    note: 'Image generated; it will be attached to the Discord reply.',
+                    note: 'Image generated; it will be attached to the Discord reply. Do not call image tools again.',
                 })
             }
 
@@ -303,7 +312,7 @@ export class GrokUtil {
                 images.push(image)
                 return JSON.stringify({
                     ok: true,
-                    note: 'Edited image ready; it will be attached to the Discord reply.',
+                    note: 'Edited image ready; it will be attached to the Discord reply. Do not call image tools again.',
                 })
             }
 
