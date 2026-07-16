@@ -1,33 +1,41 @@
 import { GrokPrompt } from '../grok/model/grok-prompt.js'
 
-interface ChatCompletionMessage {
-    role: string
-    content: string | ChatContent[] | null
-    tool_calls?: ToolCall[]
-    tool_call_id?: string
+interface FunctionCallOutput {
+    type: 'function_call'
+    call_id: string
+    name: string
+    arguments: string
 }
 
-interface ToolCall {
+interface MessageOutput {
+    type: 'message'
+    content?: { type: string; text?: string }[]
+}
+
+type ResponseOutputItem = FunctionCallOutput | MessageOutput | { type: string }
+
+interface ResponsesApiResult {
     id: string
-    type: string
-    function: { name: string; arguments: string }
-}
-
-interface ChatCompletionResponse {
-    choices: {
-        message: ChatCompletionMessage
-        finish_reason: string
-    }[]
+    output: ResponseOutputItem[]
 }
 
 interface ImageGenerationResponse {
     data: { url?: string; b64_json?: string }[]
 }
 
-type ChatContent =
-    | string
-    | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string; detail: string } }
+type InputContent =
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string; detail: string }
+
+type ResponsesTool =
+    | { type: 'web_search' }
+    | { type: 'x_search' }
+    | {
+          type: 'function'
+          name: string
+          description: string
+          parameters: Record<string, unknown>
+      }
 
 export interface GrokChatResult {
     text: string
@@ -44,6 +52,8 @@ export const CYAN_SYSTEM_PROMPT =
     'When the topic fits (dice, TTRPGs, music, anime, tech), lean into that shy-nerd enthusiasm; otherwise just be useful and chill. ' +
     'Keep answers fairly short unless they ask for detail. Skip catchphrases, disclaimers, and stiff intros. ' +
     'You may get recent chat messages for context — use them when relevant, but focus on the latest ask. ' +
+    'When a question needs current info, something you might be wrong about, or anything time-sensitive, ' +
+    'search the web thoroughly before answering — dig until you have a solid answer, not one shallow lookup. ' +
     'Default to text-only replies. Do not call image tools unless the user explicitly asks you to draw, create, generate, or edit an image ' +
     '(e.g. "draw me…", "make an image of…", "generate…", "edit this to…"). ' +
     'Never draw unprompted — not for vibes, examples, illustrations, "would look cool", or to spice up a normal answer. ' +
@@ -55,55 +65,60 @@ export const CYAN_SYSTEM_PROMPT =
     'After an image tool succeeds, keep any caption short (or empty).'
 
 export const IMAGE_MODEL = 'grok-imagine-image-quality'
+export const CHAT_MODEL = 'grok-4.5'
 
-const DRAW_IMAGE_TOOL = {
-    type: 'function' as const,
-    function: {
-        name: 'draw_image',
-        description:
-            'Generate a new image from a text description. Only use when the user explicitly asks you to draw, create, or generate an image. ' +
-            'Do not use for normal chat, explanations, or unsolicited illustrations. At most once per reply.',
-        parameters: {
-            type: 'object',
-            properties: {
-                prompt: {
-                    type: 'string',
-                    description: 'Detailed description of the image to generate',
-                },
+const DRAW_IMAGE_TOOL: ResponsesTool = {
+    type: 'function',
+    name: 'draw_image',
+    description:
+        'Generate a new image from a text description. Only use when the user explicitly asks you to draw, create, or generate an image. ' +
+        'Do not use for normal chat, explanations, or unsolicited illustrations. At most once per reply.',
+    parameters: {
+        type: 'object',
+        properties: {
+            prompt: {
+                type: 'string',
+                description: 'Detailed description of the image to generate',
             },
-            required: ['prompt'],
         },
+        required: ['prompt'],
     },
 }
 
-const EDIT_IMAGE_TOOL = {
-    type: 'function' as const,
-    function: {
-        name: 'edit_image',
-        description:
-            'Edit an attached/referenced image. Only use when the user explicitly asks for a change ' +
-            '(style, content, lighting, etc.). Do not use for praise, reactions, comments, or unsolicited edits ' +
-            '(e.g. "very good", "nice", "lol"). At most once per reply.',
-        parameters: {
-            type: 'object',
-            properties: {
-                prompt: {
-                    type: 'string',
-                    description:
-                        'Concrete description of the changes to apply (e.g. "restyle as anime illustration, less photorealistic")',
-                },
-                image_index: {
-                    type: 'integer',
-                    description:
-                        'Which attached image to edit (0-based). Defaults to 0 — the first/most relevant image.',
-                },
+const EDIT_IMAGE_TOOL: ResponsesTool = {
+    type: 'function',
+    name: 'edit_image',
+    description:
+        'Edit an attached/referenced image. Only use when the user explicitly asks for a change ' +
+        '(style, content, lighting, etc.). Do not use for praise, reactions, comments, or unsolicited edits ' +
+        '(e.g. "very good", "nice", "lol"). At most once per reply.',
+    parameters: {
+        type: 'object',
+        properties: {
+            prompt: {
+                type: 'string',
+                description:
+                    'Concrete description of the changes to apply (e.g. "restyle as anime illustration, less photorealistic")',
             },
-            required: ['prompt'],
+            image_index: {
+                type: 'integer',
+                description:
+                    'Which attached image to edit (0-based). Defaults to 0 — the first/most relevant image.',
+            },
         },
+        required: ['prompt'],
     },
 }
 
-const MAX_TOOL_ROUNDS = 3
+const WEB_SEARCH_TOOL: ResponsesTool = { type: 'web_search' }
+const X_SEARCH_TOOL: ResponsesTool = { type: 'x_search' }
+
+/** Client-side image tool rounds (web/X search turns are separate via max_turns). */
+const MAX_CLIENT_TOOL_ROUNDS = 3
+/** Agentic search/browse turns per request — higher = deeper research. */
+const MAX_SEARCH_TURNS = 10
+/** Reasoning + multi-turn search can take a while. */
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
 export class GrokUtil {
     public static async chat(
@@ -111,63 +126,58 @@ export class GrokUtil {
         prompt: GrokPrompt,
         systemPrompt: string = CYAN_SYSTEM_PROMPT
     ): Promise<GrokChatResult> {
-        const userContent: ChatContent[] | string =
+        const userContent: InputContent[] | string =
             prompt.imageUrls.length === 0
                 ? prompt.text
                 : [
-                      ...prompt.imageUrls.map((url) => ({
-                          type: 'image_url' as const,
-                          image_url: { url, detail: 'high' },
-                      })),
-                      { type: 'text' as const, text: prompt.text },
+                      ...prompt.imageUrls.map(
+                          (url): InputContent => ({
+                              type: 'input_image',
+                              image_url: url,
+                              detail: 'high',
+                          })
+                      ),
+                      { type: 'input_text', text: prompt.text },
                   ]
 
-        const tools =
-            prompt.imageUrls.length > 0
-                ? [DRAW_IMAGE_TOOL, EDIT_IMAGE_TOOL]
-                : [DRAW_IMAGE_TOOL]
-
-        const messages: ChatCompletionMessage[] = [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
+        const tools: ResponsesTool[] = [
+            WEB_SEARCH_TOOL,
+            X_SEARCH_TOOL,
+            DRAW_IMAGE_TOOL,
+            ...(prompt.imageUrls.length > 0 ? [EDIT_IMAGE_TOOL] : []),
         ]
 
         const images: Buffer[] = []
+        let previousResponseId: string | undefined
+        let input: unknown = [{ role: 'user', content: userContent }]
 
-        for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-            const data = await this.chatCompletion(apiKey, messages, tools)
-            const message = data.choices[0]?.message
-            if (message == null) {
-                throw new Error('xAI API returned no message')
-            }
-
-            const toolCalls = message.tool_calls
-            if (toolCalls == null || toolCalls.length === 0) {
-                return {
-                    text: typeof message.content === 'string' ? message.content : '',
-                    images,
-                }
-            }
-
-            messages.push({
-                role: 'assistant',
-                content: message.content,
-                tool_calls: toolCalls,
+        for (let round = 0; round < MAX_CLIENT_TOOL_ROUNDS; round++) {
+            const data = await this.createResponse(apiKey, {
+                instructions: systemPrompt,
+                input,
+                tools,
+                previousResponseId,
             })
 
-            for (const toolCall of toolCalls) {
-                const result = await this.executeImageTool(
-                    apiKey,
-                    toolCall,
-                    prompt.imageUrls,
-                    images
-                )
-                messages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: result,
+            const functionCalls = data.output.filter(
+                (item): item is FunctionCallOutput => item.type === 'function_call'
+            )
+            if (functionCalls.length === 0) {
+                return { text: this.extractOutputText(data), images }
+            }
+
+            const toolOutputs = []
+            for (const call of functionCalls) {
+                const result = await this.executeImageTool(apiKey, call, prompt.imageUrls, images)
+                toolOutputs.push({
+                    type: 'function_call_output',
+                    call_id: call.call_id,
+                    output: result,
                 })
             }
+
+            previousResponseId = data.id
+            input = toolOutputs
         }
 
         return { text: '', images }
@@ -196,6 +206,7 @@ export class GrokUtil {
                 Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify(body),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
         if (!response.ok) {
             const text = await response.text()
@@ -223,6 +234,7 @@ export class GrokUtil {
                 n: 1,
                 response_format: 'b64_json',
             }),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
         if (!response.ok) {
             const text = await response.text()
@@ -231,42 +243,71 @@ export class GrokUtil {
         return this.decodeImageResponse(await response.json())
     }
 
-    private static async chatCompletion(
+    private static async createResponse(
         apiKey: string,
-        messages: ChatCompletionMessage[],
-        tools: typeof DRAW_IMAGE_TOOL[]
-    ): Promise<ChatCompletionResponse> {
-        const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        opts: {
+            instructions?: string
+            input: unknown
+            tools: ResponsesTool[]
+            previousResponseId?: string
+        }
+    ): Promise<ResponsesApiResult> {
+        const body: Record<string, unknown> = {
+            model: CHAT_MODEL,
+            input: opts.input,
+            tools: opts.tools,
+            tool_choice: 'auto',
+            parallel_tool_calls: false,
+            reasoning: { effort: 'high' },
+            max_turns: MAX_SEARCH_TURNS,
+            stream: false,
+        }
+        if (opts.instructions != null && opts.previousResponseId == null) {
+            body.instructions = opts.instructions
+        }
+        if (opts.previousResponseId != null) {
+            body.previous_response_id = opts.previousResponseId
+        }
+
+        const response = await fetch('https://api.x.ai/v1/responses', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({
-                model: 'grok-4.5',
-                messages,
-                tools,
-                tool_choice: 'auto',
-                parallel_tool_calls: false,
-                stream: false,
-            }),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
         if (!response.ok) {
             const text = await response.text()
             throw new Error(`xAI API error (${response.status}): ${text}`)
         }
-        return (await response.json()) as ChatCompletionResponse
+        return (await response.json()) as ResponsesApiResult
+    }
+
+    private static extractOutputText(data: ResponsesApiResult): string {
+        const parts: string[] = []
+        for (const item of data.output) {
+            if (item.type !== 'message') continue
+            const message = item as MessageOutput
+            for (const part of message.content ?? []) {
+                if (part.type === 'output_text' && part.text != null && part.text.length > 0) {
+                    parts.push(part.text)
+                }
+            }
+        }
+        return parts.join('\n').trim()
     }
 
     private static async executeImageTool(
         apiKey: string,
-        toolCall: ToolCall,
+        toolCall: FunctionCallOutput,
         imageUrls: string[],
         images: Buffer[]
     ): Promise<string> {
         let args: { prompt?: string; image_index?: number }
         try {
-            args = JSON.parse(toolCall.function.arguments) as {
+            args = JSON.parse(toolCall.arguments) as {
                 prompt?: string
                 image_index?: number
             }
@@ -286,7 +327,7 @@ export class GrokUtil {
         }
 
         try {
-            if (toolCall.function.name === 'draw_image') {
+            if (toolCall.name === 'draw_image') {
                 const image = await this.generateImage(apiKey, promptText)
                 images.push(image)
                 return JSON.stringify({
@@ -295,7 +336,7 @@ export class GrokUtil {
                 })
             }
 
-            if (toolCall.function.name === 'edit_image') {
+            if (toolCall.name === 'edit_image') {
                 if (imageUrls.length === 0) {
                     return JSON.stringify({
                         error: 'no source image available to edit',
@@ -316,10 +357,10 @@ export class GrokUtil {
                 })
             }
 
-            return JSON.stringify({ error: `unknown tool: ${toolCall.function.name}` })
+            return JSON.stringify({ error: `unknown tool: ${toolCall.name}` })
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err)
-            console.error(`image tool ${toolCall.function.name} failed:`, err)
+            console.error(`image tool ${toolCall.name} failed:`, err)
             return JSON.stringify({ error: message })
         }
     }
