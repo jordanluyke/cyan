@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction } from 'discord.js'
+import { ChatInputCommandInteraction, MessageFlags } from 'discord.js'
 import {
     CommandInteraction,
     SlashCommandHandler,
@@ -11,8 +11,8 @@ export class Commands implements SlashCommandHandler {
             throw new BotError('invalid interaction', 'Expected a slash command')
         }
         const chat = interaction as ChatInputCommandInteraction
-        await chat.reply(
-            [
+        await chat.reply({
+            content: [
                 '### Audio',
                 '`/clear`',
                 '`/now`',
@@ -31,7 +31,8 @@ export class Commands implements SlashCommandHandler {
                 'Or reply to one of my messages to keep talking',
                 '',
                 'Right-click a message → **Apps → Ask Cyan**',
-            ].join('\n')
-        )
+            ].join('\n'),
+            flags: MessageFlags.Ephemeral,
+        })
     }
 }
