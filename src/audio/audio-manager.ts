@@ -1,6 +1,7 @@
 import { injectable } from 'tsyringe'
 import { Config } from '../config.js'
 import { AudioQueueItem } from './model/audio-queue-item.js'
+import { PlayAttempt } from './model/play-attempt.js'
 import {
     AudioPlayerStatus,
     createAudioResource,
@@ -75,8 +76,7 @@ export class AudioManager {
         }
 
         // Idle: download in flight — stop() would not fire Idle.
-        botState.playEpoch++
-        botState.activePlayEpoch = null
+        this.clearPlayAttempt(botState)
         botState.audioQueueItems = botState.audioQueueItems.slice(1)
         if (botState.audioQueueItems.length >= 1) {
             await this.playNextInQueue(guildId)
@@ -87,8 +87,7 @@ export class AudioManager {
     public async stop(guildId: string): Promise<void> {
         const botState = this.getBotStateOrCreate(guildId)
         this.clearVoiceIdleTimeout(botState)
-        botState.playEpoch++
-        botState.activePlayEpoch = null
+        this.clearPlayAttempt(botState)
         botState.audioQueueItems = []
         botState.audioPlayer.stop(true)
         const connection = getVoiceConnection(guildId)
@@ -131,8 +130,7 @@ export class AudioManager {
 
         // Invalidate in-flight downloads and prevent Idle from dequeuing the new head
         // when stopping the track that is currently playing.
-        botState.playEpoch++
-        botState.activePlayEpoch = null
+        this.clearPlayAttempt(botState)
         botState.audioQueueItems[0] = queueItems[0]
         const status = botState.audioPlayer.state.status
         if (shouldStopPlayerForSkip(status)) {
@@ -248,6 +246,10 @@ export class AudioManager {
         }
     }
 
+    private clearPlayAttempt(botState: BotState): void {
+        botState.playAttempt = null
+    }
+
     private async playNextInQueue(guildId: string): Promise<void> {
         const botState = this.botStateManager.getStateOrThrow(guildId)
         // Cancel a leave timer from a prior empty-queue Idle — download may take
@@ -281,8 +283,7 @@ export class AudioManager {
                 await this.playNextInQueue(guildId)
                 return
             }
-            botState.playEpoch++
-            botState.activePlayEpoch = null
+            this.clearPlayAttempt(botState)
             botState.audioQueueItems = botState.audioQueueItems.slice(1)
             if (botState.audioQueueItems.length >= 1) {
                 await this.playNextInQueue(guildId)
@@ -303,15 +304,16 @@ export class AudioManager {
         const pitchScaleInput = item.inputFlags.filter((flag) => flag.name == '-p')[0]?.value
         const pitchScale = typeof pitchScaleInput == 'string' ? parseFloat(pitchScaleInput) : null
 
-        const startedEpoch = ++botState.playEpoch
+        const attempt = new PlayAttempt()
+        botState.playAttempt = attempt
         console.log('Downloading:', item.title, item.getYoutubeUrl())
 
         this.getYoutubeVideo(item.videoId)
             .then((buffer) => {
                 if (
                     !isPlayStillValid(
-                        startedEpoch,
-                        botState.playEpoch,
+                        attempt,
+                        botState.playAttempt,
                         botState.audioQueueItems[0],
                         item
                     )
@@ -325,8 +327,8 @@ export class AudioManager {
                 if (buffer == null) return
                 if (
                     !isPlayStillValid(
-                        startedEpoch,
-                        botState.playEpoch,
+                        attempt,
+                        botState.playAttempt,
                         botState.audioQueueItems[0],
                         item
                     )
@@ -334,7 +336,7 @@ export class AudioManager {
                     return
                 }
                 console.log('Playing...')
-                botState.activePlayEpoch = startedEpoch
+                attempt.markPlaying()
                 botState.audioPlayer.play(createAudioResource(Readable.from(buffer)))
                 voiceConnection?.subscribe(botState.audioPlayer)
             })
@@ -342,8 +344,8 @@ export class AudioManager {
                 console.error('Download/play failed:', error)
                 if (
                     !isPlayStillValid(
-                        startedEpoch,
-                        botState.playEpoch,
+                        attempt,
+                        botState.playAttempt,
                         botState.audioQueueItems[0],
                         item
                     )
@@ -358,16 +360,15 @@ export class AudioManager {
                 // skip/stop/replace may have mutated the queue while we awaited Discord.
                 if (
                     !isPlayStillValid(
-                        startedEpoch,
-                        botState.playEpoch,
+                        attempt,
+                        botState.playAttempt,
                         botState.audioQueueItems[0],
                         item
                     )
                 ) {
                     return
                 }
-                botState.playEpoch++
-                botState.activePlayEpoch = null
+                this.clearPlayAttempt(botState)
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {
                     try {
@@ -456,12 +457,13 @@ export class AudioManager {
             })
             .on(AudioPlayerStatus.Idle, async () => {
                 // console.log("Idle")
-                const finishedEpoch = botState.activePlayEpoch
-                botState.activePlayEpoch = null
-                if (!shouldDequeueOnIdle(finishedEpoch, botState.playEpoch)) {
-                    // stop/replace invalidated this play; do not touch the queue head.
+                const attempt = botState.playAttempt
+                if (!shouldDequeueOnIdle(attempt)) {
+                    // Still downloading, or stop/replace cleared the attempt.
                     return
                 }
+                // Narrowed: shouldDequeueOnIdle requires non-null + playing
+                attempt.isPlaying = false
 
                 botState.audioQueueItems = botState.audioQueueItems.slice(1)
                 if (botState.audioQueueItems.length >= 1) {

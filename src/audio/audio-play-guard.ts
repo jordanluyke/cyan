@@ -1,27 +1,28 @@
+import { PlayAttempt } from './model/play-attempt.js'
+
 /**
  * Guards async download→play against skip/stop/replace races.
- * Each play attempt captures an epoch; later control commands bump playEpoch
- * so stale downloads must not call audioPlayer.play().
+ * Each play attempt is a PlayAttempt token; later control commands clear or
+ * replace playAttempt so stale downloads must not call audioPlayer.play().
  */
 export function isPlayStillValid(
-    startedEpoch: number,
-    playEpoch: number,
+    attempt: PlayAttempt,
+    playAttempt: PlayAttempt | null,
     queueHead: unknown,
     expectedItem: unknown
 ): boolean {
-    return startedEpoch === playEpoch && queueHead === expectedItem
+    return attempt === playAttempt && queueHead === expectedItem
 }
 
 /**
  * Idle means the resource that was actively playing finished.
- * Only dequeue when that play is still the current generation — otherwise
- * replace/stop already invalidated the head and owns the queue.
+ * Only dequeue when the live attempt was committed to the player — otherwise
+ * we are still downloading (or were cancelled) and Idle is from a prior stop.
  */
 export function shouldDequeueOnIdle(
-    activePlayEpoch: number | null,
-    playEpoch: number
-): boolean {
-    return activePlayEpoch != null && activePlayEpoch === playEpoch
+    playAttempt: PlayAttempt | null
+): playAttempt is PlayAttempt {
+    return playAttempt != null && playAttempt.isPlaying
 }
 
 /**

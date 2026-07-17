@@ -7,24 +7,33 @@ import {
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
 } from '../target/audio/audio-play-guard.js'
+import { PlayAttempt } from '../target/audio/model/play-attempt.js'
 
 describe('audio-play-guard', () => {
-    test('rejects stale downloads after epoch bump (skip/stop/replace)', () => {
+    test('rejects stale downloads after attempt is cleared (skip/stop/replace)', () => {
         const item = { id: 'a' }
-        expect(isPlayStillValid(1, 1, item, item)).toBe(true)
-        expect(isPlayStillValid(1, 2, item, item)).toBe(false)
+        const attempt = new PlayAttempt()
+        expect(isPlayStillValid(attempt, attempt, item, item)).toBe(true)
+        expect(isPlayStillValid(attempt, null, item, item)).toBe(false)
+        expect(isPlayStillValid(attempt, new PlayAttempt(), item, item)).toBe(false)
     })
 
     test('rejects play when queue head was replaced', () => {
         const original = { id: 'a' }
         const replaced = { id: 'b' }
-        expect(isPlayStillValid(1, 1, replaced, original)).toBe(false)
+        const attempt = new PlayAttempt()
+        expect(isPlayStillValid(attempt, attempt, replaced, original)).toBe(false)
     })
 
-    test('Idle only dequeues the active play generation', () => {
-        expect(shouldDequeueOnIdle(3, 3)).toBe(true)
-        expect(shouldDequeueOnIdle(null, 3)).toBe(false)
-        expect(shouldDequeueOnIdle(2, 3)).toBe(false)
+    test('Idle only dequeues when the live attempt is playing', () => {
+        const attempt = new PlayAttempt()
+        expect(shouldDequeueOnIdle(attempt)).toBe(false)
+        attempt.markPlaying()
+        expect(shouldDequeueOnIdle(attempt)).toBe(true)
+        expect(shouldDequeueOnIdle(null)).toBe(false)
+        // Newer download not yet committed — Idle from prior stop must not dequeue
+        const downloading = new PlayAttempt()
+        expect(shouldDequeueOnIdle(downloading)).toBe(false)
     })
 
     test('skip/replace stops player while buffering, not only playing/paused', () => {
@@ -47,21 +56,23 @@ describe('audio-play-guard', () => {
 
         // Simulate error-then-Idle: both dequeuing drops an extra track.
         const queue = ['a', 'b', 'c']
+        const attempt = new PlayAttempt()
+        attempt.markPlaying()
         const errorHandlerDequeues = shouldAdvanceQueueFromPlayerErrorHandler()
-        const idleDequeues = shouldDequeueOnIdle(1, 1)
+        const idleDequeues = shouldDequeueOnIdle(attempt)
         if (errorHandlerDequeues) queue.shift()
         if (idleDequeues) queue.shift()
         expect(queue).toEqual(['b', 'c'])
     })
 
-    test('download-fail recheck rejects after skip bumps epoch during await', () => {
+    test('download-fail recheck rejects after skip clears attempt during await', () => {
         const item = { id: 'a' }
-        const startedEpoch = 1
+        const attempt = new PlayAttempt()
         // Before await: still valid
-        expect(isPlayStillValid(startedEpoch, 1, item, item)).toBe(true)
-        // During await, /skip bumps playEpoch and replaces head
+        expect(isPlayStillValid(attempt, attempt, item, item)).toBe(true)
+        // During await, /skip clears playAttempt and replaces head
         const afterSkipHead = { id: 'b' }
-        expect(isPlayStillValid(startedEpoch, 2, afterSkipHead, item)).toBe(false)
+        expect(isPlayStillValid(attempt, null, afterSkipHead, item)).toBe(false)
     })
 
     test('play only starts playback when enqueueing onto an empty queue', () => {
