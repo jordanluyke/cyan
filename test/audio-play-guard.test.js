@@ -36,6 +36,39 @@ describe('audio-play-guard', () => {
         expect(shouldDequeueOnIdle(downloading)).toBe(false)
     })
 
+    test('replace while playing: Idle from stop must not dequeue the new head', () => {
+        // A is committed to the player.
+        const trackA = { id: 'a' }
+        const trackB = { id: 'b' }
+        const queue = [trackA]
+        let playAttempt = new PlayAttempt()
+        playAttempt.markPlaying()
+
+        // /replace: clear attempt, swap head, stop player, start download of B.
+        playAttempt = null
+        queue[0] = trackB
+        const downloadB = new PlayAttempt()
+        playAttempt = downloadB
+        // player.stop() → Idle fires while B is still downloading (playing=false)
+
+        if (shouldDequeueOnIdle(playAttempt)) {
+            playAttempt.isPlaying = false
+            queue.shift()
+        }
+
+        expect(queue).toEqual([trackB])
+        expect(playAttempt).toBe(downloadB)
+        expect(downloadB.isPlaying).toBe(false)
+
+        // Later B commits and finishes normally — Idle should dequeue.
+        downloadB.markPlaying()
+        if (shouldDequeueOnIdle(playAttempt)) {
+            playAttempt.isPlaying = false
+            queue.shift()
+        }
+        expect(queue).toEqual([])
+    })
+
     test('skip/replace stops player while buffering, not only playing/paused', () => {
         expect(shouldStopPlayerForSkip('playing')).toBe(true)
         expect(shouldStopPlayerForSkip('paused')).toBe(true)
