@@ -1,10 +1,37 @@
-import { Attachment, Guild, GuildMember, Message, SendableChannels } from 'discord.js'
+import {
+    Attachment,
+    DiscordAPIError,
+    Guild,
+    GuildMember,
+    Message,
+    MessageReplyOptions,
+    RESTJSONErrorCodes,
+    SendableChannels,
+} from 'discord.js'
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png'])
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const TYPING_REFRESH_MS = 8000
 
 export class DiscordUtil {
+    /** Reply to a message; no-ops if the original was deleted. */
+    public static async tryReply(
+        message: Message,
+        options: MessageReplyOptions
+    ): Promise<Message | null> {
+        try {
+            return await message.reply({
+                ...options,
+                allowedMentions: { repliedUser: false, ...options.allowedMentions },
+            })
+        } catch (err) {
+            if (err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.UnknownMessage) {
+                return null
+            }
+            throw err
+        }
+    }
+
     /** Keeps the typing indicator alive until the returned stop fn is called. */
     public static startTyping(channel: SendableChannels): () => void {
         let stopped = false

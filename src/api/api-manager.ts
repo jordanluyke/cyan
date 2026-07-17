@@ -12,6 +12,7 @@ import {
 import { BotError } from '../audio/model/error/bot-error.js'
 import { ApiV1 } from './api-v1.js'
 import { GrokManager } from '../grok/grok-manager.js'
+import { DiscordUtil } from '../util/discord-util.js'
 
 const api = new ApiV1()
 
@@ -84,14 +85,11 @@ export class ApiManager {
             const msg =
                 err instanceof BotError && err.sendMessage
                     ? 'Error: ' + err.sendMessage
-                    : 'Something bad happened (˚ ˃̣̣̥⌓˂̣̣̥ )'
+                    : 'Something went wrong'
             try {
-                await message.reply({ content: msg, allowedMentions: { repliedUser: false } })
+                await DiscordUtil.tryReply(message, { content: msg })
             } catch (replyErr) {
                 console.error('Failed to send mention error reply:', replyErr)
-                if (message.channel.isTextBased()) {
-                    await (message.channel as TextChannel).send(msg)
-                }
             }
         }
     }
@@ -122,7 +120,7 @@ export class ApiManager {
             const msg =
                 err instanceof BotError && err.sendMessage
                     ? 'Error: ' + err.sendMessage
-                    : 'Something bad happened (˚ ˃̣̣̥⌓˂̣̣̥ )'
+                    : 'Something went wrong'
             try {
                 if (interaction.deferred && !interaction.replied) {
                     // Deferred replies must be edited; followUp leaves the public

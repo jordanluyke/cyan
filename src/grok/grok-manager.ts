@@ -54,9 +54,8 @@ export class GrokManager {
         }
         if (prompt == null) {
             if (userPrompt.length === 0 && imageUrls.length === 0) {
-                await message.reply({
+                await DiscordUtil.tryReply(message, {
                     content: 'um… did you need something? try `@` me with a question~',
-                    allowedMentions: { repliedUser: false },
                 })
                 return
             }
@@ -317,15 +316,15 @@ export class GrokManager {
                   : ['…']
 
         if (chunks.length === 0) {
-            await message.reply({ files, allowedMentions: { repliedUser: false } })
+            await DiscordUtil.tryReply(message, { files })
             return
         }
 
-        await message.reply({
+        const reply = await DiscordUtil.tryReply(message, {
             content: chunks[0],
             ...(files.length > 0 ? { files } : {}),
-            allowedMentions: { repliedUser: false },
         })
+        if (reply == null) return
         for (const chunk of chunks.slice(1)) {
             await channel.send(chunk)
         }
