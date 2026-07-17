@@ -6,8 +6,8 @@ import {
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerForSkip,
-} from '../target/audio/audio-play-guard.js'
-import { PlayAttempt } from '../target/audio/model/play-attempt.js'
+} from '../../target/audio/audio-play-guard.js'
+import { PlayAttempt } from '../../target/audio/model/play-attempt.js'
 
 describe('audio-play-guard', () => {
     test('rejects stale downloads after attempt is cleared (skip/stop/replace)', () => {

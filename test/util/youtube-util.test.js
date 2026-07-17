@@ -1,4 +1,4 @@
-import { YoutubeUtil } from '../target/util/youtube-util.js'
+import { YoutubeUtil } from '../../target/util/youtube-util.js'
 
 function resolvePlayTarget(input) {
     if (!YoutubeUtil.isYoutubeUrl(input)) return 'invalid'

@@ -3,7 +3,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FfmpegUtil } from '../target/util/ffmpeg-util.js'
+import { FfmpegUtil } from '../../target/util/ffmpeg-util.js'
 
 const ffmpegPath = fileURLToPath(import.meta.resolve('ffmpeg-static/ffmpeg'))
 
