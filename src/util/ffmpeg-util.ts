@@ -1,5 +1,8 @@
 import ffmpeg from 'fluent-ffmpeg'
+import { fileURLToPath } from 'node:url'
 import { Readable } from 'stream'
+
+ffmpeg.setFfmpegPath(fileURLToPath(import.meta.resolve('ffmpeg-static/ffmpeg')))
 
 export class FfmpegUtil {
     public static async shift(
