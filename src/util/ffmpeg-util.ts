@@ -4,21 +4,28 @@ import { Readable } from 'stream'
 
 ffmpeg.setFfmpegPath(fileURLToPath(import.meta.resolve('ffmpeg-static/ffmpeg')))
 
+/** PCM sample rate for the pitch filter graph (Hz), not an encoder bitrate. */
+const PITCH_SAMPLE_RATE_HZ = 44100
+/** Target Opus bitrate after pitch shift (kbps). */
+const PITCH_OUTPUT_BITRATE_KBPS = 128
+
 export class FfmpegUtil {
-    public static async shift(
-        inBuffer: Buffer,
-        scale: number,
-        bitrate = 44100,
-        format = 'wav'
-    ): Promise<Buffer> {
+    /**
+     * Pitch-shift audio in memory. Outputs Ogg/Opus — not WAV — so a long track
+     * does not expand to ~10MB/min of PCM and OOM the single bot process.
+     */
+    public static async shift(inBuffer: Buffer, scale: number): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
             console.log('Shifting pitch...')
             ffmpeg()
                 .input(Readable.from(inBuffer))
-                .audioBitrate(bitrate)
-                .filterGraph(`asetrate=${bitrate}*${scale},aresample=${bitrate},atempo=1/${scale}`)
-                .format(format)
+                .audioCodec('libopus')
+                .audioBitrate(PITCH_OUTPUT_BITRATE_KBPS)
+                .filterGraph(
+                    `asetrate=${PITCH_SAMPLE_RATE_HZ}*${scale},aresample=${PITCH_SAMPLE_RATE_HZ},atempo=1/${scale}`
+                )
+                .format('ogg')
                 .on('error', (err) => {
                     reject(err)
                 })
