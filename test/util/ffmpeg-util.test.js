@@ -7,7 +7,7 @@ import { FfmpegUtil } from '../../target/util/ffmpeg-util.js'
 
 const ffmpegPath = fileURLToPath(import.meta.resolve('ffmpeg-static/ffmpeg'))
 
-/** ~10.6 MB/min for stereo s16le @ 44.1kHz — the old WAV output footprint. */
+/** ~10.6 MB/min for stereo s16le @ 44.1kHz — WAV PCM footprint. */
 function wavStereoBytesForSeconds(seconds) {
     return Math.floor(seconds * 44100 * 2 * 2)
 }
@@ -23,7 +23,7 @@ describe('FfmpegUtil.shift', () => {
         rmSync(dir, { recursive: true, force: true })
     })
 
-    test('pitch shift keeps compressed size (does not expand to WAV PCM)', () => {
+    test('pitch shift keeps compressed MP3 size (does not expand to WAV PCM)', () => {
         const seconds = 30
         const inputPath = join(dir, 'in.ogg')
         const gen = spawnSync(
@@ -47,14 +47,13 @@ describe('FfmpegUtil.shift', () => {
         expect(gen.status).toBe(0)
 
         const input = readFileSync(inputPath)
-        // Default C528-ish scale from audio-manager
         const scale = 444 / 440
 
         return FfmpegUtil.shift(input, scale).then((output) => {
             expect(output.length).toBeGreaterThan(1000)
-            // Old path buffered full WAV (~10MB/min stereo). Compressed opus must stay far below.
+            // Compressed mp3 must stay far below WAV PCM (~10MB/min stereo).
             expect(output.length).toBeLessThan(wavStereoBytesForSeconds(seconds) / 3)
-            // Sanity: roughly same order as the opus input, not a PCM blow-up.
+            // Roughly same order as the compressed input, not a PCM blow-up.
             expect(output.length).toBeLessThan(input.length * 3)
         })
     }, 60000)
