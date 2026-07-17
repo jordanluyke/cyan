@@ -136,8 +136,12 @@ export class ApiManager {
                 }
             } catch (replyErr) {
                 console.error('Failed to send error reply:', replyErr)
-                if (interaction.channel?.isTextBased()) {
-                    await (interaction.channel as TextChannel).send(msg)
+                try {
+                    if (interaction.channel?.isTextBased()) {
+                        await (interaction.channel as TextChannel).send(msg)
+                    }
+                } catch (channelErr) {
+                    console.error('Failed to send error fallback message:', channelErr)
                 }
             }
         }
