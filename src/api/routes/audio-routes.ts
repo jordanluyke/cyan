@@ -1,6 +1,7 @@
 import {
     ChatInputCommandInteraction,
     GuildMember,
+    MessageFlags,
     TextChannel,
 } from 'discord.js'
 import { AudioPlayerStatus } from '@discordjs/voice'
@@ -63,7 +64,7 @@ export class PlayAudio implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId, member, channel } = await requireGuildContext(chat)
         const query = chat.options.getString('query', true)
-        await chat.deferReply()
+        await chat.deferReply({ flags: MessageFlags.Ephemeral })
         const queued = await this.audioManager.play(guildId, member, channel, query)
         if (queued.length === 0) {
             await chat.editReply('No search results')
@@ -87,7 +88,7 @@ export class PauseAudio implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId } = await requireGuildContext(chat)
         await this.audioManager.pause(guildId)
-        await chat.reply('Paused')
+        await chat.reply({ content: 'Paused', flags: MessageFlags.Ephemeral })
     }
 }
 
@@ -99,7 +100,7 @@ export class StopAudio implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId } = await requireGuildContext(chat)
         await this.audioManager.stop(guildId)
-        await chat.reply('Stopped')
+        await chat.reply({ content: 'Stopped', flags: MessageFlags.Ephemeral })
     }
 }
 
@@ -111,7 +112,10 @@ export class SkipAudio implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId } = await requireGuildContext(chat)
         const skipped = await this.audioManager.skip(guildId)
-        await chat.reply(skipped ? 'Skipped' : 'Queue empty')
+        await chat.reply({
+            content: skipped ? 'Skipped' : 'Queue empty',
+            flags: MessageFlags.Ephemeral,
+        })
     }
 }
 
@@ -124,7 +128,7 @@ export class GetNowPlaying implements SlashCommandHandler {
         const { guildId } = await requireGuildContext(chat)
         const queue = await this.audioManager.getQueue(guildId)
         if (queue.length === 0) {
-            await chat.reply('Nothing playing')
+            await chat.reply({ content: 'Nothing playing', flags: MessageFlags.Ephemeral })
             return
         }
         const item = queue[0]
@@ -134,13 +138,15 @@ export class GetNowPlaying implements SlashCommandHandler {
                 ? `\nup next: ${queue[1].title}` +
                   (queue.length > 2 ? ` · ${queue.length - 1} in queue` : '')
                 : ''
-        await chat.reply(
-            `**Now playing** (${statusLabel(status)})\n` +
+        await chat.reply({
+            content:
+                `**Now playing** (${statusLabel(status)})\n` +
                 `${item.title}\n` +
                 `${item.getYoutubeUrl()}\n` +
                 `requested by ${item.requesterDisplayName}` +
-                upNext
-        )
+                upNext,
+            flags: MessageFlags.Ephemeral,
+        })
     }
 }
 
@@ -153,7 +159,7 @@ export class GetAudioQueue implements SlashCommandHandler {
         const { guildId } = await requireGuildContext(chat)
         const queue = await this.audioManager.getQueue(guildId)
         if (queue.length === 0) {
-            await chat.reply('Queue empty')
+            await chat.reply({ content: 'Queue empty', flags: MessageFlags.Ephemeral })
             return
         }
 
@@ -181,7 +187,7 @@ export class GetAudioQueue implements SlashCommandHandler {
             lines.push(`\n${queue.length} tracks in queue`)
         }
 
-        await chat.reply(lines.join('\n'))
+        await chat.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral })
     }
 }
 
@@ -193,7 +199,7 @@ export class ClearAudioQueue implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId } = await requireGuildContext(chat)
         await this.audioManager.clearQueue(guildId)
-        await chat.reply('Queue cleared')
+        await chat.reply({ content: 'Queue cleared', flags: MessageFlags.Ephemeral })
     }
 }
 
@@ -205,7 +211,10 @@ export class GetAudioSource implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId } = await requireGuildContext(chat)
         const queue = await this.audioManager.getQueue(guildId)
-        await chat.reply(queue.length > 0 ? queue[0].getYoutubeUrl() : 'Queue empty')
+        await chat.reply({
+            content: queue.length > 0 ? queue[0].getYoutubeUrl() : 'Queue empty',
+            flags: MessageFlags.Ephemeral,
+        })
     }
 }
 
@@ -217,7 +226,7 @@ export class ReplaceAudioQueueItem implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId, member, channel } = await requireGuildContext(chat)
         const query = chat.options.getString('query', true)
-        await chat.deferReply()
+        await chat.deferReply({ flags: MessageFlags.Ephemeral })
         const item = await this.audioManager.replaceQueueItem(guildId, member, channel, query)
         await chat.editReply(`Replaced with: **${item.title}**`)
     }
