@@ -59,12 +59,6 @@ export class ApiV1 {
                             .setName('query')
                             .setDescription('YouTube search, video URL, or playlist URL')
                             .setRequired(true)
-                    )
-                    .addNumberOption((option) =>
-                        option
-                            .setName('pitch')
-                            .setDescription('Pitch scale (e.g. 1.5)')
-                            .setRequired(false)
                     ),
                 PlayAudio
             ),
@@ -81,12 +75,6 @@ export class ApiV1 {
                             .setName('query')
                             .setDescription('YouTube search, video URL, or playlist URL')
                             .setRequired(true)
-                    )
-                    .addNumberOption((option) =>
-                        option
-                            .setName('pitch')
-                            .setDescription('Pitch scale (e.g. 1.5)')
-                            .setRequired(false)
                     ),
                 ReplaceAudioQueueItem
             ),

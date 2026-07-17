@@ -63,9 +63,8 @@ export class PlayAudio implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId, member, channel } = await requireGuildContext(chat)
         const query = chat.options.getString('query', true)
-        const pitch = chat.options.getNumber('pitch')
         await chat.deferReply()
-        const queued = await this.audioManager.play(guildId, member, channel, query, pitch)
+        const queued = await this.audioManager.play(guildId, member, channel, query)
         if (queued.length === 0) {
             await chat.editReply('No search results')
             return
@@ -218,15 +217,8 @@ export class ReplaceAudioQueueItem implements SlashCommandHandler {
         const chat = asChatInput(interaction)
         const { guildId, member, channel } = await requireGuildContext(chat)
         const query = chat.options.getString('query', true)
-        const pitch = chat.options.getNumber('pitch')
         await chat.deferReply()
-        const item = await this.audioManager.replaceQueueItem(
-            guildId,
-            member,
-            channel,
-            query,
-            pitch
-        )
+        const item = await this.audioManager.replaceQueueItem(guildId, member, channel, query)
         await chat.editReply(`Replaced with: **${item.title}**`)
     }
 }

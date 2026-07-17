@@ -28,6 +28,9 @@ import {
     shouldStopPlayerForSkip,
 } from './audio-play-guard.js'
 
+/** A440 → A444 (≈ C528) pitch scale */
+const DEFAULT_PITCH_SCALE = 444 / 440
+
 @injectable()
 export class AudioManager {
     constructor(
@@ -39,11 +42,10 @@ export class AudioManager {
         guildId: string,
         member: GuildMember,
         channel: TextChannel,
-        query: string,
-        pitch?: number | null
+        query: string
     ): Promise<AudioQueueItem[]> {
         const botState = this.getBotStateOrCreate(guildId)
-        const queueItems = await this.buildQueueItemsFromInput(member, channel, query, pitch)
+        const queueItems = await this.buildQueueItemsFromInput(member, channel, query)
         const previousQueueLength = botState.audioQueueItems.length
         botState.audioQueueItems = botState.audioQueueItems.concat(queueItems)
         // Only start when the queue was empty. Empty search results must not call
@@ -119,10 +121,9 @@ export class AudioManager {
         guildId: string,
         member: GuildMember,
         channel: TextChannel,
-        query: string,
-        pitch?: number | null
+        query: string
     ): Promise<AudioQueueItem> {
-        const queueItems = await this.buildQueueItemsFromInput(member, channel, query, pitch)
+        const queueItems = await this.buildQueueItemsFromInput(member, channel, query)
         const botState = this.getBotStateOrCreate(guildId)
         if (botState.audioQueueItems.length == 0)
             throw new BotError('items empty', 'No items in queue')
@@ -144,8 +145,7 @@ export class AudioManager {
     private async buildQueueItemsFromInput(
         member: GuildMember,
         channel: TextChannel,
-        query: string,
-        pitch?: number | null
+        query: string
     ): Promise<AudioQueueItem[]> {
         const voiceChannel = member.voice.channel
         if (voiceChannel == null)
@@ -163,10 +163,9 @@ export class AudioManager {
         const trimmed = query.trim()
         if (trimmed.length == 0) return []
 
-        const inputFlags: InputFlag[] = []
-        if (pitch != null && !Number.isNaN(pitch)) {
-            inputFlags.push(new InputFlag('-p', true, String(pitch)))
-        }
+        const inputFlags: InputFlag[] = [
+            new InputFlag('-p', true, String(DEFAULT_PITCH_SCALE)),
+        ]
 
         let queueItems: AudioQueueItem[] = []
         const youtube = new youtube_v3.Youtube({
