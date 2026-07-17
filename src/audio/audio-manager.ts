@@ -383,6 +383,7 @@ export class AudioManager {
     private getYoutubeVideo(videoId: string): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
+            const stderrChunks: Buffer[] = []
             // reject: false — tinyspawn also returns a Promise; without this a non-zero
             // exit becomes an unhandled rejection and kills the process.
             const subprocess = youtubedl.exec(
@@ -394,6 +395,7 @@ export class AudioManager {
                     // Prefer android client; default web client often 403s on media URLs.
                     // Not in youtube-dl-exec Flags typings yet.
                     extractorArgs: 'youtube:player_client=android',
+                    // Keep stdout clean for the audio pipe; stderr still gets real errors.
                     quiet: true,
                     noWarnings: true,
                 } as Parameters<typeof youtubedl.exec>[1],
@@ -402,13 +404,18 @@ export class AudioManager {
             subprocess.stdout.on('data', (chunk: Buffer) => {
                 chunks.push(chunk)
             })
+            subprocess.stderr?.on('data', (chunk: Buffer) => {
+                stderrChunks.push(chunk)
+            })
             subprocess.on('error', reject)
             subprocess.on('close', (code) => {
                 if (code === 0) {
                     resolve(Buffer.concat(chunks))
                     return
                 }
-                reject(new Error(`yt-dlp exited with code ${code}`))
+                const stderr = Buffer.concat(stderrChunks).toString('utf8').trim()
+                const detail = stderr || '(no stderr)'
+                reject(new Error(`yt-dlp exited with code ${code}: ${detail}`))
             })
         })
     }
