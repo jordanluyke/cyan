@@ -10,7 +10,7 @@ import { Config } from '../config.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { DiscordUtil } from '../util/discord-util.js'
 import { GrokUtil } from '../util/grok-util.js'
-import { GrokPrompt } from './model/grok-prompt.js'
+import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
 
 @injectable()
 export class GrokManager {
@@ -30,7 +30,12 @@ export class GrokManager {
             )
         }
 
-        const response = await GrokUtil.chat(this.config.xaiApiKey!, prompt)
+        const response = await GrokUtil.chat(
+            this.config.xaiApiKey!,
+            prompt.text,
+            prompt.imageUrls,
+            CYAN_SYSTEM_PROMPT
+        )
         await this.sendInteractionResponse(interaction, response.text, response.images)
     }
 
@@ -71,7 +76,12 @@ export class GrokManager {
 
         const stopTyping = DiscordUtil.startTyping(channel)
         try {
-            const response = await GrokUtil.chat(this.config.xaiApiKey!, prompt)
+            const response = await GrokUtil.chat(
+                this.config.xaiApiKey!,
+                prompt.text,
+                prompt.imageUrls,
+                CYAN_SYSTEM_PROMPT
+            )
             await this.sendMessageResponse(message, response.text, response.images)
         } finally {
             stopTyping()
