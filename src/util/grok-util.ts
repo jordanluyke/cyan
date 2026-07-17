@@ -28,6 +28,7 @@ type InputContent =
 type ResponsesTool =
     | { type: 'web_search' }
     | { type: 'x_search' }
+    | { type: 'code_interpreter' }
     | {
           type: 'function'
           name: string
@@ -88,6 +89,7 @@ const EDIT_IMAGE_TOOL: ResponsesTool = {
 
 const WEB_SEARCH_TOOL: ResponsesTool = { type: 'web_search' }
 const X_SEARCH_TOOL: ResponsesTool = { type: 'x_search' }
+const CODE_INTERPRETER_TOOL: ResponsesTool = { type: 'code_interpreter' }
 
 /** Client-side image tool rounds (web/X search turns are separate via max_turns). */
 const MAX_CLIENT_TOOL_ROUNDS = 3
@@ -120,6 +122,7 @@ export class GrokUtil {
         const tools: ResponsesTool[] = [
             WEB_SEARCH_TOOL,
             X_SEARCH_TOOL,
+            CODE_INTERPRETER_TOOL,
             DRAW_IMAGE_TOOL,
             ...(imageUrls.length > 0 ? [EDIT_IMAGE_TOOL] : []),
         ]
