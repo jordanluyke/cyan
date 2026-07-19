@@ -69,12 +69,39 @@ describe('audio-play-guard', () => {
         expect(queue).toEqual([])
     })
 
-    test('skip/replace stops player while buffering, not only playing/paused', () => {
+    test('skip/replace stops player whenever a resource is committed', () => {
         expect(shouldStopPlayerForSkip('playing')).toBe(true)
         expect(shouldStopPlayerForSkip('paused')).toBe(true)
         expect(shouldStopPlayerForSkip('buffering')).toBe(true)
+        // AutoPaused still holds a resource (default noSubscriber pause) and
+        // will resume it when a connection becomes playable — must stop().
+        expect(shouldStopPlayerForSkip('autopaused')).toBe(true)
         expect(shouldStopPlayerForSkip('idle')).toBe(false)
-        expect(shouldStopPlayerForSkip('autopaused')).toBe(false)
+    })
+
+    test('skip while AutoPaused stops player so Idle dequeues (does not leave old resource)', () => {
+        const queue = ['a', 'b', 'c']
+        const attempt = new PlayAttempt()
+        attempt.markPlaying()
+        let playAttempt = attempt
+        const status = 'autopaused'
+
+        // Correct skip path when a resource is committed:
+        if (shouldStopPlayerForSkip(status)) {
+            // audioPlayer.stop() → Idle; do not clear playAttempt first.
+            if (shouldDequeueOnIdle(playAttempt)) {
+                playAttempt.isPlaying = false
+                queue.shift()
+            }
+        } else {
+            // Wrong path (old bug): treat like download-in-flight Idle.
+            playAttempt = null
+            queue.shift()
+        }
+
+        expect(queue).toEqual(['b', 'c'])
+        expect(playAttempt).toBe(attempt)
+        expect(attempt.isPlaying).toBe(false)
     })
 
     test('queue advance keeps existing connection when requester left VC', () => {
