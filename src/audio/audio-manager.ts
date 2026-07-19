@@ -105,10 +105,9 @@ export class AudioManager {
     public async clearQueue(guildId: string): Promise<void> {
         const botState = this.getBotStateOrCreate(guildId)
         if (botState.audioQueueItems.length > 0) {
-            if (
-                botState.audioPlayer.state.status == AudioPlayerStatus.Paused ||
-                botState.audioPlayer.state.status == AudioPlayerStatus.Playing
-            ) {
+            // Keep the committed head whenever the player owns a resource —
+            // including Buffering/AutoPaused, which still resume/finish audio.
+            if (shouldStopPlayerForSkip(botState.audioPlayer.state.status)) {
                 botState.audioQueueItems = botState.audioQueueItems.slice(0, 1)
             } else {
                 botState.audioQueueItems = []

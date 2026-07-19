@@ -27,11 +27,19 @@ export function shouldDequeueOnIdle(
 
 /**
  * Skip/replace must stop the player whenever a resource is already committed
- * (Playing, Paused, or Buffering). Buffering is not "download in flight" —
- * the AudioPlayer already owns a resource and will reach Playing without stop().
+ * (Playing, Paused, Buffering, or AutoPaused). Buffering/AutoPaused are not
+ * "download in flight" — the AudioPlayer already owns a resource. AutoPaused
+ * (default noSubscriber behavior) still holds that resource and will resume it
+ * when a voice connection becomes playable; skipping without stop() leaves the
+ * old track playing while the queue advances.
  */
 export function shouldStopPlayerForSkip(status: string): boolean {
-    return status === 'playing' || status === 'paused' || status === 'buffering'
+    return (
+        status === 'playing' ||
+        status === 'paused' ||
+        status === 'buffering' ||
+        status === 'autopaused'
+    )
 }
 
 /**
