@@ -9,7 +9,7 @@
         "test": "npm run build && NODE_OPTIONS=--experimental-vm-modules npx jest"
     },
     "author": "Jordan Luyke",
-    "license": "ISC",
+    "license": "MIT",
     "dependencies": {
         "@discordjs/opus": "0.10.0",
         "@discordjs/voice": "0.19.2",
