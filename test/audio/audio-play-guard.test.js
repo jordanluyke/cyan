@@ -18,6 +18,58 @@ describe('audio-play-guard', () => {
         expect(isPlayStillValid(attempt, new PlayAttempt(), item, item)).toBe(false)
     })
 
+    test('cancel kills an attached download process', () => {
+        const attempt = new PlayAttempt()
+        let killedWith
+        attempt.attachDownload({
+            kill: (signal) => {
+                killedWith = signal
+                return true
+            },
+        })
+        attempt.cancel()
+        expect(killedWith).toBe('SIGTERM')
+        // Second cancel is a no-op after the handle is cleared.
+        killedWith = undefined
+        attempt.cancel()
+        expect(killedWith).toBeUndefined()
+    })
+
+    test('clearDownload prevents cancel from signalling a finished process', () => {
+        const attempt = new PlayAttempt()
+        let killCount = 0
+        attempt.attachDownload({
+            kill: () => {
+                killCount++
+                return true
+            },
+        })
+        attempt.clearDownload()
+        attempt.cancel()
+        expect(killCount).toBe(0)
+    })
+
+    test('skip/stop/replace must abort in-flight downloads (not only invalidate tokens)', () => {
+        // Simulates clearPlayAttempt: cancel the live attempt so yt-dlp stops
+        // buffering a superseded track into memory.
+        const downloading = new PlayAttempt()
+        let killed = false
+        downloading.attachDownload({
+            kill: () => {
+                killed = true
+                return true
+            },
+        })
+        let playAttempt = downloading
+
+        // clearPlayAttempt
+        playAttempt.cancel()
+        playAttempt = null
+
+        expect(killed).toBe(true)
+        expect(playAttempt).toBeNull()
+    })
+
     test('rejects play when queue head was replaced', () => {
         const original = { id: 'a' }
         const replaced = { id: 'b' }
