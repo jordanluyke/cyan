@@ -36,14 +36,14 @@ const DEFAULT_PITCH_SCALE = 444 / 440
 export class AudioManager {
     constructor(
         private config: Config,
-        private botStateManager: BotStateManager
+        private botStateManager: BotStateManager,
     ) {}
 
     public async play(
         guildId: string,
         member: GuildMember,
         channel: TextChannel,
-        query: string
+        query: string,
     ): Promise<AudioQueueItem[]> {
         const botState = this.getBotStateOrCreate(guildId)
         const queueItems = await this.buildQueueItemsFromInput(member, channel, query)
@@ -119,7 +119,7 @@ export class AudioManager {
         guildId: string,
         member: GuildMember,
         channel: TextChannel,
-        query: string
+        query: string,
     ): Promise<AudioQueueItem> {
         const queueItems = await this.buildQueueItemsFromInput(member, channel, query)
         const botState = this.getBotStateOrCreate(guildId)
@@ -142,7 +142,7 @@ export class AudioManager {
     private async buildQueueItemsFromInput(
         member: GuildMember,
         channel: TextChannel,
-        query: string
+        query: string,
     ): Promise<AudioQueueItem[]> {
         const voiceChannel = member.voice.channel
         if (voiceChannel == null)
@@ -160,9 +160,7 @@ export class AudioManager {
         const trimmed = query.trim()
         if (trimmed.length == 0) return []
 
-        const inputFlags: InputFlag[] = [
-            new InputFlag('-p', true, String(DEFAULT_PITCH_SCALE)),
-        ]
+        const inputFlags: InputFlag[] = [new InputFlag('-p', true, String(DEFAULT_PITCH_SCALE))]
 
         let queueItems: AudioQueueItem[] = []
         const youtube = new youtube_v3.Youtube({
@@ -246,6 +244,7 @@ export class AudioManager {
     }
 
     private clearPlayAttempt(botState: BotState): void {
+        botState.playAttempt?.cancel()
         botState.playAttempt = null
     }
 
@@ -258,9 +257,7 @@ export class AudioManager {
         const item = botState.audioQueueItems[0]
         const voiceChannel = item.member.voice.channel
         let voiceConnection = getVoiceConnection(guildId)
-        if (
-            shouldSkipQueueItemForVoice(voiceConnection != null, voiceChannel != null)
-        ) {
+        if (shouldSkipQueueItemForVoice(voiceConnection != null, voiceChannel != null)) {
             // Background advance (Idle / download fail / player error) must not throw —
             // an unhandled rejection can kill the process and stalls the rest of the queue.
             console.error('Skipping queue item; requester left voice and bot is not connected')
@@ -275,7 +272,7 @@ export class AudioManager {
             if (
                 !shouldSkipQueueItemForVoice(
                     voiceConnection != null,
-                    item.member.voice.channel != null
+                    item.member.voice.channel != null,
                 )
             ) {
                 // Connection or requester voice became available — play instead of skipping.
@@ -298,23 +295,31 @@ export class AudioManager {
                     voiceChannel!.guild.voiceAdapterCreator
                 ),
             })
+            // Networking/WebSocket failures emit `error` on the connection.
+            // Without a listener, Node treats that as an uncaught exception and
+            // kills the single bot process.
+            voiceConnection.on('error', (error) => {
+                console.error('Voice connection error:', error)
+            })
         }
 
         const pitchScaleInput = item.inputFlags.filter((flag) => flag.name == '-p')[0]?.value
         const pitchScale = typeof pitchScaleInput == 'string' ? parseFloat(pitchScaleInput) : null
 
+        // Cancel any prior in-flight download before starting a new one.
+        this.clearPlayAttempt(botState)
         const attempt = new PlayAttempt()
         botState.playAttempt = attempt
         console.log('Downloading:', item.title, item.getYoutubeUrl())
 
-        this.getYoutubeVideo(item.videoId)
+        this.getYoutubeVideo(item.videoId, attempt)
             .then((buffer) => {
                 if (
                     !isPlayStillValid(
                         attempt,
                         botState.playAttempt,
                         botState.audioQueueItems[0],
-                        item
+                        item,
                     )
                 ) {
                     return null
@@ -329,7 +334,7 @@ export class AudioManager {
                         attempt,
                         botState.playAttempt,
                         botState.audioQueueItems[0],
-                        item
+                        item,
                     )
                 ) {
                     return
@@ -346,7 +351,7 @@ export class AudioManager {
                         attempt,
                         botState.playAttempt,
                         botState.audioQueueItems[0],
-                        item
+                        item,
                     )
                 ) {
                     return
@@ -362,7 +367,7 @@ export class AudioManager {
                         attempt,
                         botState.playAttempt,
                         botState.audioQueueItems[0],
-                        item
+                        item,
                     )
                 ) {
                     return
@@ -379,7 +384,7 @@ export class AudioManager {
             })
     }
 
-    private getYoutubeVideo(videoId: string): Promise<Buffer> {
+    private getYoutubeVideo(videoId: string, attempt: PlayAttempt): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
             const stderrChunks: Buffer[] = []
@@ -398,18 +403,29 @@ export class AudioManager {
                     quiet: true,
                     noWarnings: true,
                 } as Parameters<typeof youtubedl.exec>[1],
-                { reject: false } as Parameters<typeof youtubedl.exec>[2]
+                { reject: false } as Parameters<typeof youtubedl.exec>[2],
             )
+            attempt.attachDownload(subprocess)
             subprocess.stdout.on('data', (chunk: Buffer) => {
                 chunks.push(chunk)
             })
             subprocess.stderr?.on('data', (chunk: Buffer) => {
                 stderrChunks.push(chunk)
             })
-            subprocess.on('error', reject)
-            subprocess.on('close', (code) => {
+            subprocess.on('error', (err) => {
+                attempt.clearDownload()
+                reject(err)
+            })
+            subprocess.on('close', (code, signal) => {
+                // Drop the handle so later cancel() does not signal a dead pid.
+                attempt.clearDownload()
                 if (code === 0) {
                     resolve(Buffer.concat(chunks))
+                    return
+                }
+                // SIGTERM from PlayAttempt.cancel() — treat as cancellation, not failure.
+                if (signal === 'SIGTERM' || subprocess.killed) {
+                    reject(new Error('yt-dlp download cancelled'))
                     return
                 }
                 const stderr = Buffer.concat(stderrChunks).toString('utf8').trim()
