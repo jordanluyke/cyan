@@ -35,6 +35,41 @@ describe('audio-play-guard', () => {
         expect(killedWith).toBeUndefined()
     })
 
+    test('cancel kills an attached ffmpeg pitch-shift job', () => {
+        const attempt = new PlayAttempt()
+        let killedWith
+        attempt.attachFfmpeg({
+            kill: (signal) => {
+                killedWith = signal
+            },
+        })
+        attempt.cancel()
+        expect(killedWith).toBe('SIGTERM')
+        killedWith = undefined
+        attempt.cancel()
+        expect(killedWith).toBeUndefined()
+    })
+
+    test('cancel aborts download and ffmpeg together', () => {
+        const attempt = new PlayAttempt()
+        let downloadKilled = false
+        let ffmpegKilled = false
+        attempt.attachDownload({
+            kill: () => {
+                downloadKilled = true
+                return true
+            },
+        })
+        attempt.attachFfmpeg({
+            kill: () => {
+                ffmpegKilled = true
+            },
+        })
+        attempt.cancel()
+        expect(downloadKilled).toBe(true)
+        expect(ffmpegKilled).toBe(true)
+    })
+
     test('clearDownload prevents cancel from signalling a finished process', () => {
         const attempt = new PlayAttempt()
         let killCount = 0
@@ -49,7 +84,20 @@ describe('audio-play-guard', () => {
         expect(killCount).toBe(0)
     })
 
-    test('skip/stop/replace must abort in-flight downloads (not only invalidate tokens)', () => {
+    test('clearFfmpeg prevents cancel from signalling a finished encode', () => {
+        const attempt = new PlayAttempt()
+        let killCount = 0
+        attempt.attachFfmpeg({
+            kill: () => {
+                killCount++
+            },
+        })
+        attempt.clearFfmpeg()
+        attempt.cancel()
+        expect(killCount).toBe(0)
+    })
+
+    test('skip/stop/replace/clear must abort in-flight downloads (not only invalidate tokens)', () => {
         // Simulates clearPlayAttempt: cancel the live attempt so yt-dlp stops
         // buffering a superseded track into memory.
         const downloading = new PlayAttempt()
@@ -68,6 +116,46 @@ describe('audio-play-guard', () => {
 
         expect(killed).toBe(true)
         expect(playAttempt).toBeNull()
+    })
+
+    test('clear while Idle must cancel in-flight download/shift before dropping queue', () => {
+        // /clear on Idle discards the head (download or pitch-shift in flight).
+        // Without cancel, yt-dlp/ffmpeg keep buffering after the queue is empty.
+        const downloading = new PlayAttempt()
+        let downloadKilled = false
+        let ffmpegKilled = false
+        downloading.attachDownload({
+            kill: () => {
+                downloadKilled = true
+                return true
+            },
+        })
+        downloading.attachFfmpeg({
+            kill: () => {
+                ffmpegKilled = true
+            },
+        })
+        let queue = [{ id: 'a' }, { id: 'b' }]
+        let playAttempt = downloading
+        const status = 'idle'
+
+        if (
+            status === 'playing' ||
+            status === 'paused' ||
+            status === 'buffering' ||
+            status === 'autopaused'
+        ) {
+            queue = queue.slice(0, 1)
+        } else {
+            playAttempt.cancel()
+            playAttempt = null
+            queue = []
+        }
+
+        expect(queue).toEqual([])
+        expect(playAttempt).toBeNull()
+        expect(downloadKilled).toBe(true)
+        expect(ffmpegKilled).toBe(true)
     })
 
     test('rejects play when queue head was replaced', () => {

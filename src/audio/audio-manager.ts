@@ -110,6 +110,9 @@ export class AudioManager {
             if (shouldStopPlayerForSkip(botState.audioPlayer.state.status)) {
                 botState.audioQueueItems = botState.audioQueueItems.slice(0, 1)
             } else {
+                // Idle with a head means download/shift may still be in flight —
+                // dropping the queue without cancel leaves yt-dlp/ffmpeg buffering.
+                this.clearPlayAttempt(botState)
                 botState.audioQueueItems = []
             }
         }
@@ -325,7 +328,7 @@ export class AudioManager {
                     return null
                 }
                 if (pitchScale == null) return buffer
-                return FfmpegUtil.shift(buffer, pitchScale)
+                return FfmpegUtil.shift(buffer, pitchScale, attempt)
             })
             .then((buffer) => {
                 if (buffer == null) return
