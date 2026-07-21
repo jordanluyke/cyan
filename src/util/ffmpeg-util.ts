@@ -41,6 +41,13 @@ export class FfmpegUtil {
                     attempt?.clearFfmpeg()
                     reject(err)
                 })
+                .on('start', () => {
+                    // fluent-ffmpeg kill() is a no-op until spawn; if cancel won
+                    // the race, stop immediately so we do not buffer the encode.
+                    if (attempt?.cancelled) {
+                        command.kill('SIGTERM')
+                    }
+                })
 
             attempt?.attachFfmpeg(command)
 
@@ -53,6 +60,10 @@ export class FfmpegUtil {
                     if (settled) return
                     settled = true
                     attempt?.clearFfmpeg()
+                    if (attempt?.cancelled) {
+                        reject(new Error('ffmpeg pitch shift cancelled'))
+                        return
+                    }
                     resolve(Buffer.concat(chunks))
                 })
         })

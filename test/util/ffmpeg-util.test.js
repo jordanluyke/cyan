@@ -63,14 +63,14 @@ describe('FfmpegUtil.shift', () => {
     }, 60000)
 
     test('cancel during pitch shift rejects and does not hang', async () => {
-        // Long enough that shift is still running when we cancel.
-        const input = generateOpusFixture(dir, 20, 'cancel-in.ogg')
+        // Long enough that an immediate cancel can win before encode finishes.
+        const input = generateOpusFixture(dir, 60, 'cancel-in.ogg')
         const scale = 444 / 440
         const attempt = new PlayAttempt()
 
         const shiftPromise = FfmpegUtil.shift(input, scale, attempt)
-        // Yield so ffmpeg has started and attachFfmpeg has run.
-        await new Promise((resolve) => setTimeout(resolve, 50))
+        // Cancel right away; FfmpegUtil kills on the ffmpeg `start` event when
+        // fluent-ffmpeg's kill() would otherwise be a no-op pre-spawn.
         attempt.cancel()
 
         await expect(shiftPromise).rejects.toThrow()

@@ -45,9 +45,23 @@ describe('audio-play-guard', () => {
         })
         attempt.cancel()
         expect(killedWith).toBe('SIGTERM')
+        expect(attempt.cancelled).toBe(true)
         killedWith = undefined
         attempt.cancel()
         expect(killedWith).toBeUndefined()
+    })
+
+    test('attachFfmpeg after cancel still signals kill', () => {
+        const attempt = new PlayAttempt()
+        attempt.cancel()
+        let killedWith
+        attempt.attachFfmpeg({
+            kill: (signal) => {
+                killedWith = signal
+            },
+        })
+        expect(attempt.cancelled).toBe(true)
+        expect(killedWith).toBe('SIGTERM')
     })
 
     test('cancel aborts download and ffmpeg together', () => {
