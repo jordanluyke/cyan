@@ -37,4 +37,32 @@ describe('YoutubeUtil', () => {
         expect(YoutubeUtil.parsePlaylistId(url)).toBe(playlistId)
         expect(resolvePlayTarget(url)).toBe(target)
     })
+
+    test('isLiveOrUpcomingBroadcast rejects live and upcoming only', () => {
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast('live')).toBe(true)
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast('upcoming')).toBe(true)
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast('none')).toBe(false)
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast(undefined)).toBe(false)
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast(null)).toBe(false)
+        expect(YoutubeUtil.isLiveOrUpcomingBroadcast('')).toBe(false)
+    })
+
+    test('search prefers first non-live result', () => {
+        const items = [
+            { id: { videoId: 'live1' }, snippet: { liveBroadcastContent: 'live', title: 'Live' } },
+            {
+                id: { videoId: 'vod1' },
+                snippet: { liveBroadcastContent: 'none', title: 'VOD' },
+            },
+            {
+                id: { videoId: 'live2' },
+                snippet: { liveBroadcastContent: 'upcoming', title: 'Soon' },
+            },
+        ]
+        const item = items.find(
+            (candidate) =>
+                !YoutubeUtil.isLiveOrUpcomingBroadcast(candidate.snippet?.liveBroadcastContent)
+        )
+        expect(item?.id.videoId).toBe('vod1')
+    })
 })

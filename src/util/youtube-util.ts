@@ -34,4 +34,15 @@ export class YoutubeUtil {
             return null
         }
     }
+
+    /**
+     * True when YouTube snippet.liveBroadcastContent is live or upcoming.
+     * Playing those via yt-dlp stdout buffers indefinitely (live) or fails
+     * (upcoming) — live downloads can OOM the single bot process.
+     */
+    public static isLiveOrUpcomingBroadcast(
+        liveBroadcastContent: string | null | undefined
+    ): boolean {
+        return liveBroadcastContent === 'live' || liveBroadcastContent === 'upcoming'
+    }
 }
