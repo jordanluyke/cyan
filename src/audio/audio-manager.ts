@@ -209,6 +209,13 @@ export class AudioManager {
                     throw new BotError('video not found', 'Video not found')
                 const snippet = items[0].snippet
                 if (snippet == null) throw new BotError('snippet null', 'snippet not found')
+                // Live stdout downloads never end — chunks grow until the process OOMs.
+                if (YoutubeUtil.isLiveOrUpcomingBroadcast(snippet.liveBroadcastContent)) {
+                    throw new BotError(
+                        'live video',
+                        "I can't play live streams or premieres — try a finished video",
+                    )
+                }
                 const title = snippet.title
                 if (title == null) throw new BotError('title null', 'title not found')
                 queueItems.push(new AudioQueueItem(title, videoId, member, channel, inputFlags))
@@ -224,7 +231,17 @@ export class AudioManager {
             const items = res.data.items
             if (items == null) throw new BotError('items null', 'No search results found')
             if (items.length == 0) return []
-            const item = items[0]
+            // Prefer the first non-live hit; a live top result would buffer forever.
+            const item = items.find(
+                (candidate) =>
+                    !YoutubeUtil.isLiveOrUpcomingBroadcast(candidate.snippet?.liveBroadcastContent),
+            )
+            if (item == null) {
+                throw new BotError(
+                    'live video',
+                    "I can't play live streams or premieres — try a different search",
+                )
+            }
             const id = item.id
             if (id == null) throw new BotError('id null', 'ID not found')
             const videoId = id.videoId
@@ -402,6 +419,9 @@ export class AudioManager {
                     // Prefer android client; default web client often 403s on media URLs.
                     // Not in youtube-dl-exec Flags typings yet.
                     extractorArgs: 'youtube:player_client=android',
+                    // Backstop when API metadata missed a live item (e.g. playlist
+                    // entries lack liveBroadcastContent) — live stdout never ends.
+                    matchFilter: '!is_live',
                     // Keep stdout clean for the audio pipe; stderr still gets real errors.
                     quiet: true,
                     noWarnings: true,
