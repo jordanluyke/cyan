@@ -42,7 +42,7 @@ export interface GrokChatResult {
 }
 
 export const IMAGE_MODEL = 'grok-imagine-image-2.0'
-export const CHAT_MODEL = 'grok-4.6'
+export const CHAT_MODEL = 'grok-4.7'
 
 const DRAW_IMAGE_TOOL: ResponsesTool = {
     type: 'function',
