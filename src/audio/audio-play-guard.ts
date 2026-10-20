@@ -134,3 +134,34 @@ export function shouldScheduleVoiceIdleDisconnect(queueLengthAfterDequeue: numbe
 export function shouldStopPlayerAfterVoiceDisconnectFailure(playerStatus: string): boolean {
     return shouldStopPlayerForSkip(playerStatus)
 }
+
+/**
+ * How many rejoin attempts to make after the voice connection is destroyed,
+ * including the immediate one. attempt 0 runs on the next turn so an
+ * intentional destroy()/stop() can cancel it in the same stack.
+ */
+export const VOICE_REJOIN_MAX_ATTEMPTS = 12
+
+/**
+ * A destroyed or still-disconnected connection cannot carry audio. Signalling
+ * and Connecting can reach Ready; Ready already can.
+ */
+export function shouldDeferPlaybackUntilVoiceReady(
+    connectionStatus: string | null | undefined,
+): boolean {
+    return connectionStatus === 'disconnected' || connectionStatus === 'destroyed'
+}
+
+/**
+ * Delay before voice rejoin attempt `attempt` (0-based). Null means give up.
+ * Attempt 0 is immediate (next turn) so a shard blip can resubscribe the
+ * AutoPaused player without waiting out a full retry interval. Later attempts
+ * wait `retryMs`.
+ */
+export function voiceRejoinDelayMs(attempt: number, retryMs: number): number | null {
+    if (!Number.isInteger(attempt) || attempt < 0 || attempt >= VOICE_REJOIN_MAX_ATTEMPTS) {
+        return null
+    }
+    if (attempt === 0) return 0
+    return retryMs
+}
