@@ -30,10 +30,12 @@ import {
     shouldKeepHeadOnClear,
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
+    shouldDeferPlaybackUntilVoiceReady,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerAfterVoiceDisconnectFailure,
     shouldStopPlayerForSkip,
+    voiceRejoinDelayMs,
 } from './audio-play-guard.js'
 
 /** A440 → A444 (≈ C528) pitch scale */
@@ -41,6 +43,9 @@ const DEFAULT_PITCH_SCALE = 444 / 440
 
 /** Wait for Discord to reclaim a Disconnected connection (channel move / blip). */
 const VOICE_DISCONNECT_RECOVERY_MS = TimeUnit.SECONDS.toMillis(5)
+
+/** Spacing between voice rejoin attempts after the connection is destroyed. */
+const VOICE_REJOIN_RETRY_MS = TimeUnit.SECONDS.toMillis(5)
 
 /** Attach disconnect/error watchers once per VoiceConnection instance. */
 const watchedVoiceConnections = new WeakSet<VoiceConnection>()
@@ -79,6 +84,8 @@ export class AudioManager {
     public async skip(guildId: string): Promise<boolean> {
         const botState = this.getBotStateOrCreate(guildId)
         if (botState.audioQueueItems.length == 0) return false
+        // A pending resubscribe would attach the new connection to the skipped resource.
+        this.clearVoiceRejoin(botState)
 
         const status = botState.audioPlayer.state.status
         if (shouldStopPlayerForSkip(status)) {
@@ -105,11 +112,14 @@ export class AudioManager {
     public async stop(guildId: string): Promise<void> {
         const botState = this.getBotStateOrCreate(guildId)
         this.clearVoiceIdleTimeout(botState)
+        this.clearVoiceRejoin(botState)
         this.clearPlayAttempt(botState)
         botState.audioQueueItems = []
         botState.audioPlayer.stop(true)
         const connection = getVoiceConnection(guildId)
         connection?.destroy()
+        // destroy() arms a resubscribe; /stop already left voice on purpose.
+        this.clearVoiceRejoin(botState)
     }
 
     public async getQueue(guildId: string): Promise<AudioQueueItem[]> {
@@ -132,6 +142,7 @@ export class AudioManager {
             } else {
                 // Idle: cancel in-flight download/shift. Paused: stop so Idle does
                 // not keep a resource after we empty the queue.
+                this.clearVoiceRejoin(botState)
                 this.clearPlayAttempt(botState)
                 botState.audioQueueItems = []
                 if (status === AudioPlayerStatus.Paused) {
@@ -158,6 +169,7 @@ export class AudioManager {
 
         // Invalidate in-flight downloads and prevent Idle from dequeuing the new head
         // when stopping the track that is currently playing.
+        this.clearVoiceRejoin(botState)
         this.clearPlayAttempt(botState)
         botState.audioQueueItems[0] = queueItems[0]
         const status = botState.audioPlayer.state.status
@@ -289,6 +301,13 @@ export class AudioManager {
         }
     }
 
+    private clearVoiceRejoin(botState: BotState): void {
+        if (botState.voiceRejoinTimeout != null) {
+            clearTimeout(botState.voiceRejoinTimeout)
+            botState.voiceRejoinTimeout = undefined
+        }
+    }
+
     /**
      * Leave voice after the idle grace period when the queue is empty.
      * Idle after a finished track is one path; skip/clear/download-fail/voice-skip
@@ -301,6 +320,8 @@ export class AudioManager {
         botState.idleTimeout = setTimeout(() => {
             const voiceConnection = getVoiceConnection(guildId)
             voiceConnection?.destroy()
+            // Idle leave is intentional — don't rejoin the channel we just left.
+            this.clearVoiceRejoin(botState)
         }, TimeUnit.MINUTES.toMillis(30))
     }
 
@@ -314,6 +335,10 @@ export class AudioManager {
         // Cancel a leave timer from a prior empty-queue Idle — download may take
         // longer than the remaining window, and destroy() would orphan playback.
         this.clearVoiceIdleTimeout(botState)
+        // Failed-disconnect destroy() schedules a resubscribe. Advancing (or
+        // restarting) playback joins on its own; leaving that timer armed would
+        // subscribe the skipped resource.
+        this.clearVoiceRejoin(botState)
         if (botState.audioQueueItems.length == 0) throw new BotError('queue empty', 'Queue empty')
         const item = botState.audioQueueItems[0]
         const voiceChannel = item.member.voice.channel
@@ -477,6 +502,14 @@ export class AudioManager {
         voiceConnection.on(VoiceConnectionStatus.Disconnected, () => {
             void this.handleVoiceDisconnect(guildId, voiceConnection)
         })
+        // Shard disconnect and guild removal destroy the adapter, which calls
+        // VoiceConnection.destroy() directly. That emits `destroyed` and drops
+        // the player subscription — it does not emit `disconnected`. The player
+        // then sits AutoPaused (resource kept, no Ready subscriber) and Idle
+        // never advances. Resubscribe the same player so the track resumes.
+        voiceConnection.on(VoiceConnectionStatus.Destroyed, () => {
+            this.scheduleVoiceRejoin(guildId, voiceConnection.joinConfig.channelId, 0)
+        })
         return voiceConnection
     }
 
@@ -517,11 +550,78 @@ export class AudioManager {
 
         const botState = this.botStateManager.getState(guildId)
         if (botState == null) return
+        // destroy() schedules a same-track resubscribe. This disconnect already
+        // failed the grace period — cancel that and let Idle skip the head.
+        this.clearVoiceRejoin(botState)
         if (shouldStopPlayerAfterVoiceDisconnectFailure(botState.audioPlayer.state.status)) {
             // Idle dequeues the interrupted head and starts the next item (or
             // schedules leave). Without stop(), AutoPaused never reaches Idle.
             botState.audioPlayer.stop(true)
         }
+    }
+
+    /**
+     * Try to put the guild back in the channel it was in before the connection
+     * was destroyed, and subscribe the existing player. The queued resource stays
+     * on the player (AutoPaused); a new Ready subscriber resumes it.
+     */
+    private scheduleVoiceRejoin(guildId: string, channelId: string | null, attempt: number): void {
+        const botState = this.botStateManager.getState(guildId)
+        if (botState == null) return
+        const delay = voiceRejoinDelayMs(attempt, VOICE_REJOIN_RETRY_MS)
+        this.clearVoiceRejoin(botState)
+        if (delay == null) {
+            const item = botState.audioQueueItems[0]
+            if (
+                item != null &&
+                shouldStopPlayerAfterVoiceDisconnectFailure(botState.audioPlayer.state.status)
+            ) {
+                void item
+                    .sendMessage("lost voice and couldn't rejoin — /skip to keep going")
+                    .catch((err) => console.error('Failed to send voice rejoin message:', err))
+            }
+            return
+        }
+        botState.voiceRejoinTimeout = setTimeout(() => {
+            botState.voiceRejoinTimeout = undefined
+            try {
+                this.rejoinVoiceAfterLoss(guildId, channelId, attempt)
+            } catch (err) {
+                console.error('Voice rejoin failed:', err)
+                this.scheduleVoiceRejoin(guildId, channelId, attempt + 1)
+            }
+        }, delay)
+    }
+
+    private rejoinVoiceAfterLoss(guildId: string, channelId: string | null, attempt: number): void {
+        const botState = this.botStateManager.getState(guildId)
+        if (botState == null || botState.audioQueueItems.length === 0) return
+        const item = botState.audioQueueItems[0]
+        const voiceChannel = this.resolveRejoinChannel(item, channelId)
+        if (voiceChannel == null) {
+            // Channel cache / requester voice may be briefly stale during a
+            // gateway blip. Retry until the budget is gone; don't skip the track.
+            this.scheduleVoiceRejoin(guildId, channelId, attempt + 1)
+            return
+        }
+
+        const voiceConnection = this.joinAndWatchVoice(voiceChannel)
+        if (shouldDeferPlaybackUntilVoiceReady(voiceConnection.state.status)) {
+            // Shard not Ready: sendPayload fails and the new connection stays
+            // Disconnected. Subscribing it would leave the player AutoPaused.
+            this.scheduleVoiceRejoin(guildId, channelId, attempt + 1)
+            return
+        }
+        voiceConnection.subscribe(botState.audioPlayer)
+        console.log('Rejoined voice after connection loss')
+    }
+
+    private resolveRejoinChannel(item: AudioQueueItem, channelId: string | null) {
+        if (channelId != null) {
+            const cached = item.channel.guild.channels.cache.get(channelId)
+            if (cached?.isVoiceBased()) return cached
+        }
+        return item.member.voice.channel
     }
 
     /**
@@ -544,6 +644,8 @@ export class AudioManager {
                 voiceConnection = this.joinAndWatchVoice(requesterChannel)
             } else {
                 voiceConnection.destroy()
+                // Requester is gone — destroy() must not resubscribe us to that channel.
+                this.clearVoiceRejoin(botState)
                 voiceConnection = getVoiceConnection(guildId)
             }
         }

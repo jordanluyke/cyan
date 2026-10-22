@@ -8,6 +8,8 @@ export class BotState {
         public audioPlayer = createAudioPlayer(),
         public idleTimeout?: any,
         /** Live download/play attempt; cleared or replaced to cancel in-flight work. */
-        public playAttempt: PlayAttempt | null = null
+        public playAttempt: PlayAttempt | null = null,
+        /** Pending resubscribe after the voice connection was destroyed. */
+        public voiceRejoinTimeout?: ReturnType<typeof setTimeout>,
     ) {}
 }

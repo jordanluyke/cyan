@@ -6,10 +6,13 @@ import {
     shouldKeepHeadOnClear,
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
+    shouldDeferPlaybackUntilVoiceReady,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerAfterVoiceDisconnectFailure,
     shouldStopPlayerForSkip,
+    VOICE_REJOIN_MAX_ATTEMPTS,
+    voiceRejoinDelayMs,
 } from '../../target/audio/audio-play-guard.js'
 import { PlayAttempt } from '../../target/audio/model/play-attempt.js'
 
@@ -447,5 +450,46 @@ describe('audio-play-guard', () => {
         expect(queue).toEqual(['b', 'c'])
         expect(playAttempt).toBe(attempt)
         expect(attempt.isPlaying).toBe(false)
+    })
+
+    test('destroyed voice must resubscribe, not treat the player as idle', () => {
+        // ShardDisconnect destroys the discord.js voice adapter, which calls
+        // VoiceConnection.destroy() directly. That unsubscribes the player and
+        // emits `destroyed` — not `disconnected` — so the 5s disconnect handler
+        // never runs. Default noSubscriber behavior then AutoPauses with the
+        // resource still loaded. Idle never fires and the queue stalls until
+        // someone runs /skip. Rejoin must subscribe that same player.
+        expect(shouldDeferPlaybackUntilVoiceReady('disconnected')).toBe(true)
+        expect(shouldDeferPlaybackUntilVoiceReady('destroyed')).toBe(true)
+        expect(shouldDeferPlaybackUntilVoiceReady('signalling')).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady('connecting')).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady('ready')).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady(null)).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady(undefined)).toBe(false)
+
+        // Attempt 0 runs next turn so /stop's destroy() can clear it in-stack.
+        // Later attempts wait. The budget is finite so a dead shard cannot
+        // retry forever.
+        const retryMs = 5000
+        expect(voiceRejoinDelayMs(0, retryMs)).toBe(0)
+        expect(voiceRejoinDelayMs(1, retryMs)).toBe(retryMs)
+        expect(voiceRejoinDelayMs(VOICE_REJOIN_MAX_ATTEMPTS - 1, retryMs)).toBe(retryMs)
+        expect(voiceRejoinDelayMs(VOICE_REJOIN_MAX_ATTEMPTS, retryMs)).toBeNull()
+        expect(voiceRejoinDelayMs(-1, retryMs)).toBeNull()
+        expect(voiceRejoinDelayMs(1.5, retryMs)).toBeNull()
+
+        // Player still owns the interrupted resource — do not dequeue it just
+        // because the connection object was destroyed.
+        const queue = ['current', 'next']
+        const attempt = new PlayAttempt()
+        attempt.markPlaying()
+        const playerStatus = 'autopaused'
+        const rejoined = !shouldDeferPlaybackUntilVoiceReady('signalling')
+        if (!rejoined && shouldStopPlayerAfterVoiceDisconnectFailure(playerStatus)) {
+            if (shouldDequeueOnIdle(attempt)) queue.shift()
+        }
+        expect(rejoined).toBe(true)
+        expect(queue).toEqual(['current', 'next'])
+        expect(attempt.isPlaying).toBe(true)
     })
 })
