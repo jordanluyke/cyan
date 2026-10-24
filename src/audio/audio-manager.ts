@@ -434,7 +434,17 @@ export class AudioManager {
                 console.log('Playing...')
                 attempt.markPlaying()
                 botState.audioPlayer.play(createAudioResource(Readable.from(buffer)))
-                readyConnection.subscribe(botState.audioPlayer)
+                if (shouldDeferPlaybackUntilVoiceReady(readyConnection.state.status)) {
+                    // joinVoiceChannel() moves to Disconnected synchronously when
+                    // sendPayload fails, and that happens before our listener is
+                    // attached — handleVoiceDisconnect never runs, and nothing
+                    // will call rejoin() again. subscribe() on that connection
+                    // AutoPauses with no Ready subscriber and the queue stalls.
+                    // Hold the resource (AutoPaused) and retry until it can play.
+                    this.scheduleVoiceRejoin(guildId, readyConnection.joinConfig.channelId, 0)
+                } else {
+                    readyConnection.subscribe(botState.audioPlayer)
+                }
             })
             .catch(async (error) => {
                 console.error('Download/play failed:', error)

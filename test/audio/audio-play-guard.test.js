@@ -492,4 +492,27 @@ describe('audio-play-guard', () => {
         expect(queue).toEqual(['current', 'next'])
         expect(attempt.isPlaying).toBe(true)
     })
+
+    test('post-download play must rejoin a disconnected connection, not subscribe it', () => {
+        // joinVoiceChannel() sets Disconnected synchronously when the gateway
+        // cannot sendPayload — before AudioManager's listener exists — so the
+        // 5s disconnect handler never runs. ensureVoice's rejoin() can leave
+        // the same status. Subscribing then AutoPauses forever with no retry.
+        // The resource stays committed (isPlaying) and attempt 0 is armed.
+        const attempt = new PlayAttempt()
+        attempt.markPlaying()
+
+        for (const status of ['disconnected', 'destroyed']) {
+            const subscribed = !shouldDeferPlaybackUntilVoiceReady(status)
+            const rejoinArmed =
+                shouldDeferPlaybackUntilVoiceReady(status) && voiceRejoinDelayMs(0, 5000) === 0
+            expect(subscribed).toBe(false)
+            expect(rejoinArmed).toBe(true)
+        }
+
+        expect(shouldDeferPlaybackUntilVoiceReady('signalling')).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady('connecting')).toBe(false)
+        expect(shouldDeferPlaybackUntilVoiceReady('ready')).toBe(false)
+        expect(attempt.isPlaying).toBe(true)
+    })
 })
