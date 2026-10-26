@@ -165,3 +165,19 @@ export function voiceRejoinDelayMs(attempt: number, retryMs: number): number | n
     if (attempt === 0) return 0
     return retryMs
 }
+
+/**
+ * youtube-dl-exec returns tinyspawn's promise. `{ reject: false }` only stops
+ * a non-zero *exit* from rejecting that promise. A failed spawn (`error`,
+ * e.g. missing or non-executable yt-dlp) still rejects it, and nothing awaits
+ * the promise. Node's default `unhandledRejection=throw` then kills the
+ * process — one `/play` takes down every guild.
+ *
+ * Callers still observe the failure on the ChildProcess `error` / `close`
+ * events and advance the queue from there.
+ */
+export function preventUnhandledSubprocessRejection(subprocess: Promise<unknown>): void {
+    void subprocess.catch((err) => {
+        console.error('yt-dlp subprocess promise rejected:', err)
+    })
+}

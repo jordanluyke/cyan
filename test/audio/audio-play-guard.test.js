@@ -7,6 +7,7 @@ import {
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
     shouldDeferPlaybackUntilVoiceReady,
+    preventUnhandledSubprocessRejection,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerAfterVoiceDisconnectFailure,
@@ -491,6 +492,27 @@ describe('audio-play-guard', () => {
         expect(rejoined).toBe(true)
         expect(queue).toEqual(['current', 'next'])
         expect(attempt.isPlaying).toBe(true)
+    })
+
+    test('yt-dlp spawn rejection must not escape as an unhandledRejection', async () => {
+        // tinyspawn rejects on the ChildProcess `error` event even when
+        // `{ reject: false }` is set. Node's default is to crash the process.
+        const unhandled = []
+        const onUnhandled = (err) => unhandled.push(err)
+        const logged = []
+        const originalError = console.error
+        console.error = (...args) => logged.push(args)
+        process.on('unhandledRejection', onUnhandled)
+        try {
+            const subprocess = Promise.reject(new Error('spawn yt-dlp ENOENT'))
+            preventUnhandledSubprocessRejection(subprocess)
+            await new Promise((resolve) => setTimeout(resolve, 20))
+            expect(unhandled).toEqual([])
+            expect(logged.length).toBe(1)
+        } finally {
+            console.error = originalError
+            process.off('unhandledRejection', onUnhandled)
+        }
     })
 
     test('post-download play must rejoin a disconnected connection, not subscribe it', () => {
