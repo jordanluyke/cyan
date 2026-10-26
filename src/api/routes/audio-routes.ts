@@ -114,14 +114,13 @@ export class DownloadAudio implements SlashCommandHandler {
 
     public async handle(interaction: CommandInteraction): Promise<void> {
         const chat = asChatInput(interaction)
-        const { member, channel } = await requireGuildContext(chat)
+        const { channel } = await requireGuildContext(chat)
         await chat.deferReply()
         assertCanPostAudio(channel, chat)
         const query = chat.options.getString('query', true)
         const maxBytes = resolveAudioUploadByteLimit(chat.attachmentSizeLimit)
         const file = await this.audioManager.downloadAudio(query, maxBytes)
         await chat.editReply({
-            content: `**${file.title}**\n${file.url}\nrequested by ${member.displayName}`,
             files: [
                 {
                     name: file.filename,
@@ -129,7 +128,6 @@ export class DownloadAudio implements SlashCommandHandler {
                     attachment: file.buffer,
                 },
             ],
-            allowedMentions: { parse: [] },
         })
     }
 }

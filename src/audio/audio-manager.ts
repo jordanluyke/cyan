@@ -60,7 +60,6 @@ const watchedVoiceConnections = new WeakSet<VoiceConnection>()
 
 export type DownloadedAudio = {
     title: string
-    url: string
     filename: string
     buffer: Buffer
 }
@@ -242,7 +241,6 @@ export class AudioManager {
 
         return {
             title: video.title,
-            url: `https://www.youtube.com/watch?v=${video.videoId}`,
             filename: audioDownloadFilename(video.title),
             buffer,
         }
