@@ -58,9 +58,6 @@ const VOICE_REJOIN_RETRY_MS = TimeUnit.SECONDS.toMillis(5)
 /** Attach disconnect/error watchers once per VoiceConnection instance. */
 const watchedVoiceConnections = new WeakSet<VoiceConnection>()
 
-/** Audio-only. Playback may fall back to a video format; a file upload must not. */
-const DOWNLOAD_AUDIO_FORMAT = 'bestaudio[acodec=opus]/bestaudio'
-
 export type DownloadedAudio = {
     title: string
     url: string
@@ -213,7 +210,6 @@ export class AudioManager {
         try {
             raw = await this.getYoutubeVideo(video.videoId, new PlayAttempt(), {
                 maxBytes: rawAudioByteCap(maxBytes),
-                format: DOWNLOAD_AUDIO_FORMAT,
             })
         } catch (err) {
             if (err instanceof AudioDownloadTooLargeError) {
@@ -776,7 +772,7 @@ export class AudioManager {
     private getYoutubeVideo(
         videoId: string,
         attempt: PlayAttempt,
-        options?: { maxBytes?: number; format?: string },
+        options?: { maxBytes?: number },
     ): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
@@ -786,15 +782,15 @@ export class AudioManager {
             // reject: false — tinyspawn also returns a Promise; without this a non-zero
             // exit becomes an unhandled rejection and kills the process.
             // Spawn failures still reject that promise; see preventUnhandledSubprocessRejection.
+            // One selector for /play and /download_audio. Opus, then any audio-only
+            // format, then a muxed file. Leave the player client to yt-dlp: pinning
+            // android currently drops audio-only URLs.
             const subprocess = youtubedl.exec(
                 `https://www.youtube.com/watch?v=${videoId}`,
                 {
                     output: '-',
-                    format: options?.format ?? 'bestaudio[acodec=opus]/bestaudio/best',
+                    format: 'bestaudio[acodec=opus]/bestaudio/best',
                     formatSort: ['abr'],
-                    // Prefer android client; default web client often 403s on media URLs.
-                    // Not in youtube-dl-exec Flags typings yet.
-                    extractorArgs: 'youtube:player_client=android',
                     // Backstop when API metadata missed a live item (e.g. playlist
                     // entries lack liveBroadcastContent) — live stdout never ends.
                     matchFilter: '!is_live',
