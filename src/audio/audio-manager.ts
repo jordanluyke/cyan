@@ -31,6 +31,7 @@ import {
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
     shouldDeferPlaybackUntilVoiceReady,
+    preventUnhandledSubprocessRejection,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerAfterVoiceDisconnectFailure,
@@ -707,6 +708,7 @@ export class AudioManager {
             const stderrChunks: Buffer[] = []
             // reject: false — tinyspawn also returns a Promise; without this a non-zero
             // exit becomes an unhandled rejection and kills the process.
+            // Spawn failures still reject that promise; see preventUnhandledSubprocessRejection.
             const subprocess = youtubedl.exec(
                 `https://www.youtube.com/watch?v=${videoId}`,
                 {
@@ -725,6 +727,7 @@ export class AudioManager {
                 } as Parameters<typeof youtubedl.exec>[1],
                 { reject: false } as Parameters<typeof youtubedl.exec>[2],
             )
+            preventUnhandledSubprocessRejection(subprocess)
             attempt.attachDownload(subprocess)
             subprocess.stdout.on('data', (chunk: Buffer) => {
                 chunks.push(chunk)
