@@ -15,6 +15,7 @@ export class Commands implements SlashCommandHandler {
             content: [
                 '### Audio',
                 '`/clear`',
+                '`/download_audio query:`',
                 '`/now`',
                 '`/pause`',
                 '`/play query:`',

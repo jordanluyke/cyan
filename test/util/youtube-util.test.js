@@ -38,6 +38,22 @@ describe('YoutubeUtil', () => {
         expect(resolvePlayTarget(url)).toBe(target)
     })
 
+    test('parseIsoDurationSeconds reads YouTube contentDetails.duration', () => {
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT1H2M3S')).toBe(3723)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT15M')).toBe(900)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT45S')).toBe(45)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT1H')).toBe(3600)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT1M30.2S')).toBe(91)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT0S')).toBe(0)
+        expect(YoutubeUtil.parseIsoDurationSeconds('P1DT1H')).toBe(90_000)
+        expect(YoutubeUtil.parseIsoDurationSeconds('P1DT2H3M4.2S')).toBe(93_785)
+        expect(YoutubeUtil.parseIsoDurationSeconds('PT')).toBe(null)
+        expect(YoutubeUtil.parseIsoDurationSeconds('P1W')).toBe(null)
+        expect(YoutubeUtil.parseIsoDurationSeconds(null)).toBe(null)
+        expect(YoutubeUtil.parseIsoDurationSeconds('')).toBe(null)
+        expect(YoutubeUtil.parseIsoDurationSeconds('nope')).toBe(null)
+    })
+
     test('isLiveOrUpcomingBroadcast rejects live and upcoming only', () => {
         expect(YoutubeUtil.isLiveOrUpcomingBroadcast('live')).toBe(true)
         expect(YoutubeUtil.isLiveOrUpcomingBroadcast('upcoming')).toBe(true)

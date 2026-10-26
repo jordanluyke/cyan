@@ -7,6 +7,7 @@ import {
 import { SlashCommand } from './model/slash-command.js'
 import {
     ClearAudioQueue,
+    DownloadAudio,
     GetAudioQueue,
     GetAudioSource,
     GetNowPlaying,
@@ -32,6 +33,18 @@ export class ApiV1 {
                     .setName('clear')
                     .setDescription('Clear the audio queue'),
                 ClearAudioQueue
+            ),
+            new SlashCommand(
+                new SlashCommandBuilder()
+                    .setName('download_audio')
+                    .setDescription('Download YouTube audio and post it in this channel')
+                    .addStringOption((option) =>
+                        option
+                            .setName('query')
+                            .setDescription('YouTube search or video URL')
+                            .setRequired(true)
+                    ),
+                DownloadAudio
             ),
             new SlashCommand(
                 new SlashCommandBuilder()

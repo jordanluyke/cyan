@@ -7,8 +7,8 @@ ffmpeg.setFfmpegPath(fileURLToPath(import.meta.resolve('ffmpeg-static/ffmpeg')))
 
 /** PCM sample rate for the pitch filter graph (Hz), not an encoder bitrate. */
 const PITCH_SAMPLE_RATE_HZ = 44100
-/** Target MP3 bitrate after pitch shift (kbps). */
-const PITCH_OUTPUT_BITRATE_KBPS = 128
+/** Target MP3 bitrate (kbps) for encoded uploads and pitch-shifted playback. */
+export const MP3_BITRATE_KBPS = 128
 
 export class FfmpegUtil {
     /**
@@ -30,7 +30,7 @@ export class FfmpegUtil {
             const command = ffmpeg()
                 .input(Readable.from(inBuffer))
                 .audioCodec('libmp3lame')
-                .audioBitrate(PITCH_OUTPUT_BITRATE_KBPS)
+                .audioBitrate(MP3_BITRATE_KBPS)
                 .filterGraph(
                     `asetrate=${PITCH_SAMPLE_RATE_HZ}*${scale},aresample=${PITCH_SAMPLE_RATE_HZ},atempo=1/${scale}`,
                 )
@@ -64,6 +64,35 @@ export class FfmpegUtil {
                         reject(new Error('ffmpeg pitch shift cancelled'))
                         return
                     }
+                    resolve(Buffer.concat(chunks))
+                })
+        })
+    }
+
+    /** Encode an in-memory audio buffer to MP3 at {@link MP3_BITRATE_KBPS}. */
+    public static async toMp3(inBuffer: Buffer): Promise<Buffer> {
+        return new Promise((resolve, reject) => {
+            const chunks: Buffer[] = []
+            let settled = false
+            const command = ffmpeg()
+                .input(Readable.from(inBuffer))
+                .audioCodec('libmp3lame')
+                .audioBitrate(MP3_BITRATE_KBPS)
+                .format('mp3')
+                .on('error', (err) => {
+                    if (settled) return
+                    settled = true
+                    reject(err)
+                })
+
+            command
+                .pipe()
+                .on('data', (chunk) => {
+                    chunks.push(chunk)
+                })
+                .on('end', () => {
+                    if (settled) return
+                    settled = true
                     resolve(Buffer.concat(chunks))
                 })
         })

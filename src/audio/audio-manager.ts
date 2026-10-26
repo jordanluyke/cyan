@@ -24,6 +24,12 @@ import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
 import { YoutubeUtil } from '../util/youtube-util.js'
 import {
+    AudioDownloadTooLargeError,
+    audioDownloadFilename,
+    audioExceedsUploadLimit,
+    rawAudioByteCap,
+} from './audio-download-limit.js'
+import {
     isPlayStillValid,
     shouldDequeueOnIdle,
     shouldForceStopOnSkip,
@@ -50,6 +56,16 @@ const VOICE_REJOIN_RETRY_MS = TimeUnit.SECONDS.toMillis(5)
 
 /** Attach disconnect/error watchers once per VoiceConnection instance. */
 const watchedVoiceConnections = new WeakSet<VoiceConnection>()
+
+/** Audio-only. Playback may fall back to a video format; a file upload must not. */
+const DOWNLOAD_AUDIO_FORMAT = 'bestaudio[acodec=opus]/bestaudio'
+
+export type DownloadedAudio = {
+    title: string
+    url: string
+    filename: string
+    buffer: Buffer
+}
 
 @injectable()
 export class AudioManager {
@@ -179,6 +195,60 @@ export class AudioManager {
         }
         await this.playNextInQueue(guildId)
         return queueItems[0]
+    }
+
+    /**
+     * Download one video's audio and encode it to an mp3 that fits `maxBytes`.
+     * Does not join voice or touch the guild queue.
+     */
+    public async downloadAudio(query: string, maxBytes: number): Promise<DownloadedAudio> {
+        const video = await this.resolveSingleVideo(query)
+        if (audioExceedsUploadLimit(video.durationSeconds, maxBytes)) {
+            throw new BotError('audio too long', "That video's audio is too long to upload here")
+        }
+
+        console.log('Downloading audio file:', video.title, video.videoId)
+        let raw: Buffer
+        try {
+            raw = await this.getYoutubeVideo(video.videoId, new PlayAttempt(), {
+                maxBytes: rawAudioByteCap(maxBytes),
+                format: DOWNLOAD_AUDIO_FORMAT,
+            })
+        } catch (err) {
+            if (err instanceof AudioDownloadTooLargeError) {
+                throw new BotError(
+                    'audio too large',
+                    "That video's audio is too long to upload here",
+                )
+            }
+            if (err instanceof BotError) throw err
+            console.error('Audio file download failed:', err)
+            throw new BotError('download failed', 'Download fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
+        }
+        if (raw.length === 0) {
+            throw new BotError('empty audio', 'Download fail (˚ ˃̣̣̥⌓˂̣̣̥ )')
+        }
+
+        let buffer: Buffer
+        try {
+            buffer = await FfmpegUtil.toMp3(raw)
+        } catch (err) {
+            console.error('Audio file encode failed:', err)
+            throw new BotError('encode failed', "Couldn't convert that to an audio file")
+        }
+        if (buffer.length === 0) {
+            throw new BotError('empty audio', "Couldn't convert that to an audio file")
+        }
+        if (buffer.length > maxBytes) {
+            throw new BotError('audio too large', "That video's audio is too long to upload here")
+        }
+
+        return {
+            title: video.title,
+            url: `https://www.youtube.com/watch?v=${video.videoId}`,
+            filename: audioDownloadFilename(video.title),
+            buffer,
+        }
     }
 
     private async buildQueueItemsFromInput(
@@ -702,10 +772,16 @@ export class AudioManager {
         return voiceConnection
     }
 
-    private getYoutubeVideo(videoId: string, attempt: PlayAttempt): Promise<Buffer> {
+    private getYoutubeVideo(
+        videoId: string,
+        attempt: PlayAttempt,
+        options?: { maxBytes?: number; format?: string },
+    ): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             const chunks: Buffer[] = []
             const stderrChunks: Buffer[] = []
+            let totalBytes = 0
+            let capped = false
             // reject: false — tinyspawn also returns a Promise; without this a non-zero
             // exit becomes an unhandled rejection and kills the process.
             // Spawn failures still reject that promise; see preventUnhandledSubprocessRejection.
@@ -713,7 +789,7 @@ export class AudioManager {
                 `https://www.youtube.com/watch?v=${videoId}`,
                 {
                     output: '-',
-                    format: 'bestaudio[acodec=opus]/bestaudio/best',
+                    format: options?.format ?? 'bestaudio[acodec=opus]/bestaudio/best',
                     formatSort: ['abr'],
                     // Prefer android client; default web client often 403s on media URLs.
                     // Not in youtube-dl-exec Flags typings yet.
@@ -730,6 +806,16 @@ export class AudioManager {
             preventUnhandledSubprocessRejection(subprocess)
             attempt.attachDownload(subprocess)
             subprocess.stdout.on('data', (chunk: Buffer) => {
+                if (capped) return
+                const maxBytes = options?.maxBytes
+                if (maxBytes != null && totalBytes + chunk.length > maxBytes) {
+                    // Kill before the buffer can grow into a video-sized download.
+                    capped = true
+                    attempt.cancel()
+                    reject(new AudioDownloadTooLargeError())
+                    return
+                }
+                totalBytes += chunk.length
                 chunks.push(chunk)
             })
             subprocess.stderr?.on('data', (chunk: Buffer) => {
@@ -737,11 +823,13 @@ export class AudioManager {
             })
             subprocess.on('error', (err) => {
                 attempt.clearDownload()
+                if (capped) return
                 reject(err)
             })
             subprocess.on('close', (code, signal) => {
                 // Drop the handle so later cancel() does not signal a dead pid.
                 attempt.clearDownload()
+                if (capped) return
                 if (code === 0) {
                     resolve(Buffer.concat(chunks))
                     return
@@ -756,6 +844,87 @@ export class AudioManager {
                 reject(new Error(`yt-dlp exited with code ${code}: ${detail}`))
             })
         })
+    }
+
+    private async resolveSingleVideo(query: string): Promise<{
+        title: string
+        videoId: string
+        durationSeconds: number
+    }> {
+        const trimmed = query.trim()
+        if (trimmed.length === 0) {
+            throw new BotError('query empty', 'Send a YouTube search or video link')
+        }
+
+        const youtube = new youtube_v3.Youtube({
+            auth: this.config.youtubeApiKey,
+        })
+        const input = trimmed.split(/\s+/)[0]
+        let videoId: string
+
+        if (YoutubeUtil.isYoutubeUrl(input)) {
+            const parsed = YoutubeUtil.parseVideoId(input)
+            if (parsed == null) {
+                if (YoutubeUtil.parsePlaylistId(input) != null) {
+                    throw new BotError(
+                        'playlist url',
+                        'Send one video — a playlist is more than one audio file',
+                    )
+                }
+                throw new BotError('Invalid url', 'Invalid YouTube url')
+            }
+            videoId = parsed
+        } else {
+            const res = await youtube.search.list({
+                part: ['snippet'],
+                q: trimmed,
+                type: ['video'],
+                regionCode: 'US',
+                safeSearch: 'none',
+            })
+            const items = res.data.items
+            if (items == null) throw new BotError('items null', 'No search results found')
+            if (items.length === 0) throw new BotError('no results', 'No search results')
+            const item = items.find(
+                (candidate) =>
+                    !YoutubeUtil.isLiveOrUpcomingBroadcast(candidate.snippet?.liveBroadcastContent),
+            )
+            if (item == null) {
+                throw new BotError(
+                    'live video',
+                    "I can't download live streams or premieres — try a finished video",
+                )
+            }
+            const id = item.id?.videoId
+            if (id == null) throw new BotError('videoId null', 'videoId not found')
+            videoId = id
+        }
+
+        const res = await youtube.videos.list({
+            part: ['snippet', 'contentDetails'],
+            id: [videoId],
+        })
+        const items = res.data.items
+        if (items == null || items.length === 0) {
+            throw new BotError('video not found', 'Video not found')
+        }
+        const snippet = items[0].snippet
+        if (snippet == null) throw new BotError('snippet null', 'snippet not found')
+        if (YoutubeUtil.isLiveOrUpcomingBroadcast(snippet.liveBroadcastContent)) {
+            throw new BotError(
+                'live video',
+                "I can't download live streams or premieres — try a finished video",
+            )
+        }
+        const title = snippet.title
+        if (title == null) throw new BotError('title null', 'title not found')
+        const durationSeconds = YoutubeUtil.parseIsoDurationSeconds(
+            items[0].contentDetails?.duration,
+        )
+        if (durationSeconds == null || durationSeconds <= 0) {
+            throw new BotError('duration unknown', "I couldn't read that video's length")
+        }
+        return { title, videoId, durationSeconds }
     }
 
     private getBotStateOrCreate(guildId: string): BotState {

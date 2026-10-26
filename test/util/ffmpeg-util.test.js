@@ -76,3 +76,27 @@ describe('FfmpegUtil.shift', () => {
         await expect(shiftPromise).rejects.toThrow()
     }, 60000)
 })
+
+describe('FfmpegUtil.toMp3', () => {
+    let dir
+
+    beforeAll(() => {
+        dir = mkdtempSync(join(tmpdir(), 'cyan-mp3-'))
+    })
+
+    afterAll(() => {
+        rmSync(dir, { recursive: true, force: true })
+    })
+
+    test('encodes an opus buffer as mp3', () => {
+        const seconds = 2
+        const input = generateOpusFixture(dir, seconds, 'tomp3.ogg')
+        return FfmpegUtil.toMp3(input).then((output) => {
+            expect(output.length).toBeGreaterThan(1000)
+            expect(output.length).toBeLessThan(wavStereoBytesForSeconds(seconds) / 3)
+            const id3 = output.subarray(0, 3).toString('ascii') === 'ID3'
+            const frame = output[0] === 0xff && (output[1] & 0xe0) === 0xe0
+            expect(id3 || frame).toBe(true)
+        })
+    }, 60000)
+})

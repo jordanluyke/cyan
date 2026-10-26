@@ -2,6 +2,7 @@ import {
     ChatInputCommandInteraction,
     GuildMember,
     MessageFlags,
+    PermissionFlagsBits,
     TextChannel,
 } from 'discord.js'
 import { AudioPlayerStatus } from '@discordjs/voice'
@@ -11,6 +12,7 @@ import {
     SlashCommandHandler,
 } from '../model/slash-command-handler.js'
 import { AudioManager } from '../../audio/audio-manager.js'
+import { resolveAudioUploadByteLimit } from '../../audio/audio-download-limit.js'
 import { BotError } from '../../audio/model/error/bot-error.js'
 import { DiscordUtil } from '../../util/discord-util.js'
 
@@ -47,6 +49,32 @@ async function requireGuildContext(interaction: ChatInputCommandInteraction): Pr
     }
 }
 
+function assertCanPostAudio(
+    channel: TextChannel,
+    interaction: ChatInputCommandInteraction,
+): void {
+    const user = interaction.client.user
+    if (user == null) throw new BotError('user null', 'User not found')
+    const permissions = channel.permissionsFor(user)
+    if (permissions == null) {
+        throw new BotError(
+            'missing permission',
+            'I need permission to send messages and attach files',
+        )
+    }
+    // Threads require SendMessagesInThreads. A text channel can lack SendMessages
+    // while the role still has the thread bit, so these are not interchangeable.
+    const canSend = channel.isThread()
+        ? permissions.has(PermissionFlagsBits.SendMessagesInThreads)
+        : permissions.has(PermissionFlagsBits.SendMessages)
+    if (!canSend || !permissions.has(PermissionFlagsBits.AttachFiles)) {
+        throw new BotError(
+            'missing permission',
+            'I need permission to send messages and attach files',
+        )
+    }
+}
+
 function statusLabel(status: AudioPlayerStatus): string {
     if (status === AudioPlayerStatus.Paused) return 'Paused'
     if (status === AudioPlayerStatus.Playing || status === AudioPlayerStatus.Buffering)
@@ -77,6 +105,32 @@ export class PlayAudio implements SlashCommandHandler {
         await chat.editReply(
             `Queued **${queued.length}** tracks (starting with **${queued[0].title}**)`
         )
+    }
+}
+
+@injectable()
+export class DownloadAudio implements SlashCommandHandler {
+    constructor(public audioManager: AudioManager) {}
+
+    public async handle(interaction: CommandInteraction): Promise<void> {
+        const chat = asChatInput(interaction)
+        const { member, channel } = await requireGuildContext(chat)
+        await chat.deferReply()
+        assertCanPostAudio(channel, chat)
+        const query = chat.options.getString('query', true)
+        const maxBytes = resolveAudioUploadByteLimit(chat.attachmentSizeLimit)
+        const file = await this.audioManager.downloadAudio(query, maxBytes)
+        await chat.editReply({
+            content: `**${file.title}**\n${file.url}\nrequested by ${member.displayName}`,
+            files: [
+                {
+                    name: file.filename,
+                    contentType: 'audio/mpeg',
+                    attachment: file.buffer,
+                },
+            ],
+            allowedMentions: { parse: [] },
+        })
     }
 }
 
