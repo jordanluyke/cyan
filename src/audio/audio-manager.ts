@@ -23,6 +23,7 @@ import { Readable } from 'stream'
 import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
 import { YoutubeUtil } from '../util/youtube-util.js'
+import { ytDlpSpawnEnv } from '../util/yt-dlp-env.js'
 import {
     AudioDownloadTooLargeError,
     audioDownloadFilename,
@@ -801,7 +802,7 @@ export class AudioManager {
                     quiet: true,
                     noWarnings: true,
                 } as Parameters<typeof youtubedl.exec>[1],
-                { reject: false } as Parameters<typeof youtubedl.exec>[2],
+                { reject: false, env: ytDlpSpawnEnv() } as Parameters<typeof youtubedl.exec>[2],
             )
             preventUnhandledSubprocessRejection(subprocess)
             attempt.attachDownload(subprocess)
