@@ -7,11 +7,13 @@ import {
     Message,
     MessageContextMenuCommandInteraction,
     MessageFlags,
+    ModalSubmitInteraction,
     TextChannel,
 } from 'discord.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { ApiV1 } from './api-v1.js'
 import { GrokManager } from '../grok/grok-manager.js'
+import { isDrawModalCustomId } from '../grok/draw-modal.js'
 import { DiscordUtil } from '../util/discord-util.js'
 
 const api = new ApiV1()
@@ -57,6 +59,11 @@ export class ApiManager {
             .on('interactionCreate', async (interaction) => {
                 if (interaction.isChatInputCommand() || interaction.isMessageContextMenuCommand()) {
                     await this.routeCommand(interaction)
+                } else if (
+                    interaction.isModalSubmit() &&
+                    isDrawModalCustomId(interaction.customId)
+                ) {
+                    await this.routeDrawModal(interaction)
                 }
             })
             .on('messageCreate', async (message) => {
@@ -113,36 +120,56 @@ export class ApiManager {
         try {
             await handler.handle(interaction)
         } catch (err) {
-            console.error(`/${interaction.commandName} error: ${err}`)
-            if (err instanceof Error) {
-                console.error(err.stack ?? err)
+            await this.reportInteractionError(interaction, err, `/${interaction.commandName}`)
+        }
+    }
+
+    private async routeDrawModal(interaction: ModalSubmitInteraction): Promise<void> {
+        const grokManager = container.resolve(GrokManager)
+        try {
+            await grokManager.completeDrawFromMessage(interaction)
+        } catch (err) {
+            await this.reportInteractionError(interaction, err, '/draw')
+        }
+    }
+
+    private async reportInteractionError(
+        interaction:
+            | ChatInputCommandInteraction
+            | MessageContextMenuCommandInteraction
+            | ModalSubmitInteraction,
+        err: unknown,
+        label: string
+    ): Promise<void> {
+        console.error(`${label} error: ${err}`)
+        if (err instanceof Error) {
+            console.error(err.stack ?? err)
+        }
+        const msg =
+            err instanceof BotError && err.sendMessage
+                ? 'Error: ' + err.sendMessage
+                : 'Something went wrong'
+        try {
+            if (interaction.deferred && !interaction.replied) {
+                // Deferred replies must be edited; followUp leaves the public
+                // "thinking…" message stuck forever (/draw, Ask Cyan, /play).
+                await interaction.editReply({ content: msg })
+            } else if (interaction.replied) {
+                await interaction.followUp({
+                    content: msg,
+                    flags: MessageFlags.Ephemeral,
+                })
+            } else {
+                await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
             }
-            const msg =
-                err instanceof BotError && err.sendMessage
-                    ? 'Error: ' + err.sendMessage
-                    : 'Something went wrong'
+        } catch (replyErr) {
+            console.error('Failed to send error reply:', replyErr)
             try {
-                if (interaction.deferred && !interaction.replied) {
-                    // Deferred replies must be edited; followUp leaves the public
-                    // "thinking…" message stuck forever (/draw, Ask Cyan, /play).
-                    await interaction.editReply({ content: msg })
-                } else if (interaction.replied) {
-                    await interaction.followUp({
-                        content: msg,
-                        flags: MessageFlags.Ephemeral,
-                    })
-                } else {
-                    await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral })
+                if (interaction.channel?.isTextBased()) {
+                    await (interaction.channel as TextChannel).send(msg)
                 }
-            } catch (replyErr) {
-                console.error('Failed to send error reply:', replyErr)
-                try {
-                    if (interaction.channel?.isTextBased()) {
-                        await (interaction.channel as TextChannel).send(msg)
-                    }
-                } catch (channelErr) {
-                    console.error('Failed to send error fallback message:', channelErr)
-                }
+            } catch (channelErr) {
+                console.error('Failed to send error fallback message:', channelErr)
             }
         }
     }

@@ -13,6 +13,7 @@ alwaysApply: false
 | `@mention` or reply to bot | `ApiManager.routeMention` → `GrokManager.askFromMention` |
 | Context menu Ask Cyan | slash route → `GrokManager.askAboutMessage` |
 | `/draw` | slash route → `GrokManager.draw` |
+| Context menu Draw | slash route → modal → `GrokManager.completeDrawFromMessage` |
 
 ## Layering
 

@@ -35,3 +35,15 @@ export class Draw implements SlashCommandHandler {
         return this.grokManager.draw(interaction as ChatInputCommandInteraction)
     }
 }
+
+@injectable()
+export class DrawMessage implements SlashCommandHandler {
+    constructor(private grokManager: GrokManager) {}
+
+    public async handle(interaction: CommandInteraction): Promise<void> {
+        if (!interaction.isMessageContextMenuCommand()) {
+            throw new BotError('invalid interaction', 'Expected a message context menu command')
+        }
+        return this.grokManager.beginDrawFromMessage(interaction)
+    }
+}

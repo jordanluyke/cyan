@@ -19,7 +19,7 @@ import {
 } from './routes/audio-routes.js'
 import { Commands } from './routes/misc-routes.js'
 import { DownloadMessages } from './routes/channel-routes.js'
-import { Draw, Grok } from './routes/grok-routes.js'
+import { Draw, DrawMessage, Grok } from './routes/grok-routes.js'
 
 export class ApiV1 {
     constructor(
@@ -131,6 +131,12 @@ export class ApiV1 {
                             )
                     ),
                 Draw
+            ),
+            new SlashCommand(
+                new ContextMenuCommandBuilder()
+                    .setName('Draw')
+                    .setType(ApplicationCommandType.Message),
+                DrawMessage
             ),
             new SlashCommand(
                 new ContextMenuCommandBuilder()

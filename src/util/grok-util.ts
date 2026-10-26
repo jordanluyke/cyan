@@ -43,6 +43,8 @@ export interface GrokChatResult {
 
 export const IMAGE_MODEL = 'grok-imagine-image-2.0'
 export const CHAT_MODEL = 'grok-4.7'
+/** Imagine edits accept at most this many source images. */
+export const MAX_EDIT_IMAGES = 5
 
 const DRAW_IMAGE_TOOL: ResponsesTool = {
     type: 'function',
@@ -199,21 +201,32 @@ export class GrokUtil {
     public static async editImage(
         apiKey: string,
         prompt: string,
-        imageUrl: string
+        imageUrl: string | readonly string[]
     ): Promise<Buffer> {
+        const urls = (typeof imageUrl === 'string' ? [imageUrl] : imageUrl).slice(0, MAX_EDIT_IMAGES)
+        if (urls.length === 0) {
+            throw new Error('no source image')
+        }
+
+        const body: Record<string, unknown> = {
+            model: IMAGE_MODEL,
+            prompt,
+            n: 1,
+            response_format: 'b64_json',
+        }
+        if (urls.length === 1) {
+            body.image = { url: urls[0], type: 'image_url' }
+        } else {
+            body.images = urls.map((url) => ({ url, type: 'image_url' }))
+        }
+
         const response = await fetch('https://api.x.ai/v1/images/edits', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({
-                model: IMAGE_MODEL,
-                prompt,
-                image: { url: imageUrl, type: 'image_url' },
-                n: 1,
-                response_format: 'b64_json',
-            }),
+            body: JSON.stringify(body),
             signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
         if (!response.ok) {

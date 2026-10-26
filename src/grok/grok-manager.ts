@@ -4,13 +4,15 @@ import {
     Guild,
     Message,
     MessageContextMenuCommandInteraction,
+    ModalSubmitInteraction,
     TextChannel,
 } from 'discord.js'
 import { Config } from '../config.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { DateUtil } from '../util/date-util.js'
 import { DiscordUtil } from '../util/discord-util.js'
-import { GrokUtil } from '../util/grok-util.js'
+import { GrokUtil, MAX_EDIT_IMAGES } from '../util/grok-util.js'
+import { buildDrawModal, parseDrawModalCustomId } from './draw-modal.js'
 import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
 
 @injectable()
@@ -121,9 +123,113 @@ export class GrokManager {
         }
     }
 
+    /** Right-click Draw. Slash commands cannot be sent as a reply, so this targets the message. */
+    public async beginDrawFromMessage(
+        interaction: MessageContextMenuCommandInteraction
+    ): Promise<void> {
+        this.requireApiKey()
+        if (
+            interaction.channelId == null ||
+            interaction.channelId !== interaction.targetMessage.channelId
+        ) {
+            throw new BotError('no channel', "i can't see that channel")
+        }
+        const images = DiscordUtil.getMessageImages(interaction.targetMessage)
+        if (images.length === 0) {
+            throw new BotError('no image', "that message doesn't have a pic i can draw from")
+        }
+
+        await interaction.showModal(
+            buildDrawModal(interaction.channelId, interaction.targetMessage.id)
+        )
+    }
+
+    public async completeDrawFromMessage(interaction: ModalSubmitInteraction): Promise<void> {
+        this.requireApiKey()
+        const parsed = parseDrawModalCustomId(interaction.customId)
+        if (parsed == null || interaction.channelId !== parsed.channelId) {
+            throw new BotError('bad draw modal', "i can't see that channel")
+        }
+        const promptText = interaction.fields.getTextInputValue('prompt').trim()
+        if (promptText.length === 0) {
+            throw new BotError('empty prompt', 'give me something to draw~')
+        }
+
+        const channel = interaction.channel
+        if (channel == null || !channel.isTextBased()) {
+            throw new BotError('no channel', "i can't see that channel")
+        }
+
+        await interaction.deferReply()
+        try {
+            let message: Message
+            try {
+                message = await channel.messages.fetch(parsed.messageId)
+            } catch (err) {
+                console.error('draw error:', err)
+                throw new BotError('message missing', "i can't see that message")
+            }
+
+            const imageUrls = DiscordUtil.getMessageImages(message).slice(0, MAX_EDIT_IMAGES)
+            if (imageUrls.length === 0) {
+                throw new BotError('no image', "that message doesn't have a pic i can draw from")
+            }
+            const dataUris = await Promise.all(imageUrls.map((url) => this.imageUrlToDataUri(url)))
+            const image = await GrokUtil.editImage(this.config.xaiApiKey!, promptText, dataUris)
+            await interaction.editReply({
+                files: [
+                    {
+                        name: 'cyan-draw.png',
+                        attachment: image,
+                    },
+                ],
+            })
+        } catch (err) {
+            if (err instanceof BotError) throw err
+            console.error('draw error:', err)
+            throw new BotError(
+                'image generation failed',
+                "couldn't draw that… try a different prompt?"
+            )
+        }
+    }
+
+    private async imageUrlToDataUri(url: string): Promise<string> {
+        const response = await fetch(url, {
+            signal: AbortSignal.timeout(GrokManager.SOURCE_IMAGE_TIMEOUT_MS),
+        })
+        if (!response.ok) {
+            throw new Error(`failed to fetch source image (${response.status})`)
+        }
+        const bytes = Buffer.from(await response.arrayBuffer())
+        if (bytes.length === 0) {
+            throw new Error('source image was empty')
+        }
+        const header = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? null
+        return `data:${GrokManager.imageMediaType(bytes, header)};base64,${bytes.toString('base64')}`
+    }
+
+    private static imageMediaType(bytes: Buffer, header: string | null): string {
+        if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+            return 'image/jpeg'
+        }
+        if (
+            bytes.length >= 8 &&
+            bytes[0] === 0x89 &&
+            bytes[1] === 0x50 &&
+            bytes[2] === 0x4e &&
+            bytes[3] === 0x47
+        ) {
+            return 'image/png'
+        }
+        if (header != null && header.startsWith('image/')) return header
+        return 'image/png'
+    }
+
     private static readonly MAX_REPLY_CHAIN = 10
     private static readonly MAX_CHANNEL_CONTEXT = 15
     private static readonly MAX_CONTEXT_MSG_LENGTH = 300
+    private static readonly SOURCE_IMAGE_TIMEOUT_MS = 30_000
 
     private requireApiKey(): void {
         if (this.config.xaiApiKey == null) {
