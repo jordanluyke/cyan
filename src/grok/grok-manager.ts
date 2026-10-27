@@ -10,8 +10,9 @@ import {
 import { Config } from '../config.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { DateUtil } from '../util/date-util.js'
-import { DiscordUtil } from '../util/discord-util.js'
+import { DiscordUtil, MAX_IMAGE_BYTES } from '../util/discord-util.js'
 import { GrokUtil, MAX_EDIT_IMAGES } from '../util/grok-util.js'
+import { readResponseBodyWithLimit, ResponseTooLargeError } from '../util/response-body-limit.js'
 import { buildDrawModal, parseDrawModalCustomId } from './draw-modal.js'
 import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
 import { replyChainImages } from './reply-chain-images.js'
@@ -200,9 +201,21 @@ export class GrokManager {
             signal: AbortSignal.timeout(GrokManager.SOURCE_IMAGE_TIMEOUT_MS),
         })
         if (!response.ok) {
+            await response.body?.cancel().catch(() => {})
             throw new Error(`failed to fetch source image (${response.status})`)
         }
-        const bytes = Buffer.from(await response.arrayBuffer())
+        // Embed image.url is the original file, not Discord's sized proxy, and
+        // attachments only skip files whose metadata is already over the cap.
+        // arrayBuffer() would hold a multi-gigabyte body and OOM the process.
+        let bytes: Buffer
+        try {
+            bytes = await readResponseBodyWithLimit(response, MAX_IMAGE_BYTES)
+        } catch (err) {
+            if (err instanceof ResponseTooLargeError) {
+                throw new BotError('image too large', "that pic is too big for me to draw from")
+            }
+            throw err
+        }
         if (bytes.length === 0) {
             throw new Error('source image was empty')
         }
