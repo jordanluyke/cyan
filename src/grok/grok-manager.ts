@@ -14,6 +14,7 @@ import { DiscordUtil } from '../util/discord-util.js'
 import { GrokUtil, MAX_EDIT_IMAGES } from '../util/grok-util.js'
 import { buildDrawModal, parseDrawModalCustomId } from './draw-modal.js'
 import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
+import { replyChainImages } from './reply-chain-images.js'
 
 @injectable()
 export class GrokManager {
@@ -287,17 +288,20 @@ export class GrokManager {
 
         if (chain.length === 0) return null
 
-        // Newest first so edit_image defaults to the image being replied to.
-        const chainImageUrls = [...chain]
-            .reverse()
-            .flatMap((m) => DiscordUtil.getMessageImages(m))
-        const imageUrls = [...chainImageUrls, ...(opts?.extraImageUrls ?? [])]
         const hasChainText = chain.some((m) => DiscordUtil.getMessageText(m).length > 0)
-        if (!hasChainText && imageUrls.length === 0 && userPrompt.length === 0) {
+        const hasChainImages = chain.some((m) => DiscordUtil.getMessageImages(m).length > 0)
+        const extraImageUrls = opts?.extraImageUrls ?? []
+        if (
+            !hasChainText &&
+            !hasChainImages &&
+            extraImageUrls.length === 0 &&
+            userPrompt.length === 0
+        ) {
             return null
         }
 
         const now = Date.now()
+        const described: { imageUrls: string[]; label: string }[] = []
         const parts: string[] = []
         for (const chainMessage of chain) {
             const content = DiscordUtil.getMessageText(chainMessage)
@@ -307,6 +311,10 @@ export class GrokManager {
             )
             const age = DateUtil.formatRelativeAge(now - chainMessage.createdTimestamp)
             const msgImages = DiscordUtil.getMessageImages(chainMessage)
+            described.push({
+                imageUrls: msgImages,
+                label: `${displayName}, ${age}`,
+            })
             if (content.length > 0) {
                 parts.push(
                     msgImages.length > 0
@@ -318,41 +326,56 @@ export class GrokManager {
             }
         }
 
+        const picked = replyChainImages(described, extraImageUrls)
+        if (picked.earlierImageNote != null) {
+            parts.push(picked.earlierImageNote)
+        }
+
         let text = parts.join('\n\n')
         if (userPrompt.length > 0) {
             text = text.length > 0 ? `${text}\n\n${userPrompt}` : userPrompt
-        } else if (imageUrls.length > 0) {
+        } else if (picked.imageUrls.length > 0) {
             text = text.length > 0 ? `${text}\n\nwhat's in this?` : "what's in this pic?"
         } else {
             text = text.length > 0 ? text : 'help them out with whatever they were talking about'
         }
 
-        return new GrokPrompt(text, imageUrls)
+        return new GrokPrompt(text, picked.imageUrls)
     }
 
     /** Oldest → newest including the starting message, walking up references. */
     private async fetchReplyChain(start: Message): Promise<Message[]> {
         const chain: Message[] = [start]
+        const seen = new Set<string>([start.id])
         let current = start
-        while (current.reference != null && chain.length < GrokManager.MAX_REPLY_CHAIN) {
-            try {
-                current = await current.fetchReference()
-            } catch {
-                break
-            }
-            chain.push(current)
+        while (chain.length < GrokManager.MAX_REPLY_CHAIN) {
+            const parent = await this.fetchReplyParent(current)
+            if (parent == null || seen.has(parent.id)) break
+            seen.add(parent.id)
+            chain.push(parent)
+            current = parent
         }
         return chain.reverse()
     }
 
     /** Oldest → newest from the message this one replies to (excludes start). */
     private async fetchReplyChainFromReference(start: Message): Promise<Message[]> {
-        if (start.reference == null) return []
+        const referenced = await this.fetchReplyParent(start)
+        if (referenced == null) return []
+        return this.fetchReplyChain(referenced)
+    }
+
+    /** Full fetch so a cached reply still has its parent reference and attachments. */
+    private async fetchReplyParent(message: Message): Promise<Message | null> {
+        const messageId = message.reference?.messageId
+        const channelId = message.reference?.channelId
+        if (messageId == null || channelId == null) return null
+        const channel = message.client.channels.resolve(channelId)
+        if (channel == null || !channel.isTextBased()) return null
         try {
-            const referenced = await start.fetchReference()
-            return this.fetchReplyChain(referenced)
+            return await channel.messages.fetch({ message: messageId, force: true })
         } catch {
-            return []
+            return null
         }
     }
 

@@ -25,6 +25,6 @@ alwaysApply: false
 ## Conventions
 
 - Inject `Config`; require `XAI_API_KEY` and throw `BotError` if missing
-- Keep context limits as coded (reply chain max 10; channel msgs max 15 × 300 chars)
+- Keep context limits as coded (reply chain max 10; channel msgs max 15 × 300 chars; chat images max 3)
 - Chat may call client image tools only when the user explicitly asks to draw/edit
 - Do not invent new AI entry points outside mention/reply, Ask Cyan, and `/draw` without updating `ApiManager` / `ApiV1`

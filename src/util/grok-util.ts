@@ -45,12 +45,15 @@ export const IMAGE_MODEL = 'grok-imagine-image-2.0'
 export const CHAT_MODEL = 'grok-4.7'
 /** Imagine edits accept at most this many source images. */
 export const MAX_EDIT_IMAGES = 5
+/** Vision images sent with one chat. Newest are kept. */
+export const MAX_PROMPT_IMAGES = 3
 
 const DRAW_IMAGE_TOOL: ResponsesTool = {
     type: 'function',
     name: 'draw_image',
     description:
         'Generate a new image from a text description. Only use when the user explicitly asks you to draw, create, or generate an image. ' +
+        'If an image is already attached and they want that image changed, use edit_image instead. ' +
         'Do not use for normal chat, explanations, or unsolicited illustrations. At most once per reply.',
     parameters: {
         type: 'object',
@@ -68,9 +71,9 @@ const EDIT_IMAGE_TOOL: ResponsesTool = {
     type: 'function',
     name: 'edit_image',
     description:
-        'Edit an attached/referenced image. Only use when the user explicitly asks for a change ' +
+        'Edit an attached image, including one from earlier in the reply chain. Only use when the user explicitly asks for a change ' +
         '(style, content, lighting, etc.). Do not use for praise, reactions, comments, or unsolicited edits ' +
-        '(e.g. "very good", "nice", "lol"). At most once per reply.',
+        '(e.g. "very good", "nice", "lol"). Image 0 is the latest pic. At most once per reply.',
     parameters: {
         type: 'object',
         properties: {
@@ -82,7 +85,7 @@ const EDIT_IMAGE_TOOL: ResponsesTool = {
             image_index: {
                 type: 'integer',
                 description:
-                    'Which attached image to edit (0-based). Defaults to 0 — the first/most relevant image.',
+                    'Which attached image to edit (0-based). Defaults to 0 — the latest pic, even if a few replies came after it.',
             },
         },
         required: ['prompt'],
@@ -107,11 +110,12 @@ export class GrokUtil {
         imageUrls: string[] = [],
         systemPrompt?: string
     ): Promise<GrokChatResult> {
+        const promptImages = imageUrls.slice(0, MAX_PROMPT_IMAGES)
         const userContent: InputContent[] | string =
-            imageUrls.length === 0
+            promptImages.length === 0
                 ? text
                 : [
-                      ...imageUrls.map(
+                      ...promptImages.map(
                           (url): InputContent => ({
                               type: 'input_image',
                               image_url: url,
@@ -126,7 +130,7 @@ export class GrokUtil {
             X_SEARCH_TOOL,
             CODE_INTERPRETER_TOOL,
             DRAW_IMAGE_TOOL,
-            ...(imageUrls.length > 0 ? [EDIT_IMAGE_TOOL] : []),
+            ...(promptImages.length > 0 ? [EDIT_IMAGE_TOOL] : []),
         ]
 
         const images: Buffer[] = []
@@ -150,7 +154,7 @@ export class GrokUtil {
 
             const toolOutputs = []
             for (const call of functionCalls) {
-                const result = await this.executeImageTool(apiKey, call, imageUrls, images)
+                const result = await this.executeImageTool(apiKey, call, promptImages, images)
                 toolOutputs.push({
                     type: 'function_call_output',
                     call_id: call.call_id,

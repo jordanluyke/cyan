@@ -28,8 +28,10 @@ export const CYAN_SYSTEM_PROMPT =
     '(e.g. "draw me…", "make an image of…", "generate…", "edit this to…"). ' +
     'Never draw unprompted — not for vibes, examples, illustrations, "would look cool", or to spice up a normal answer. ' +
     'At most one image tool call per reply. ' +
-    'Only call edit_image when they clearly want a change to an attached/referenced image ' +
-    '(e.g. "too realistic", "make it anime", "add a hat"). ' +
+    'Only call edit_image when they clearly want a change to an attached image, including one from earlier in the reply chain ' +
+    '(e.g. "too realistic", "make it anime", "add a hat", "make it this way"). ' +
+    'Attached images are newest-first. Image 0 is the latest pic, even if a few replies came after it. ' +
+    'When they want that pic changed, call edit_image — do not draw a new one. ' +
     'If they are just reacting, praising, or commenting with no requested change ' +
     '(e.g. "very good", "lol", "nice", "love this"), reply with text only — do not redraw or edit. ' +
     'After an image tool succeeds, keep any caption short (or empty).'
