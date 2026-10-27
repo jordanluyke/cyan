@@ -10,7 +10,8 @@ import {
 } from 'discord.js'
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png'])
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+/** Attachments larger than this are ignored. Draw downloads must use the same cap. */
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const TYPING_REFRESH_MS = 8000
 
 export class DiscordUtil {
