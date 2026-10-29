@@ -448,10 +448,14 @@ export class GrokManager {
 
         await interaction.editReply({
             content: chunks[0],
+            allowedMentions: DiscordUtil.suppressedMentions(),
             ...(files.length > 0 ? { files } : {}),
         })
         for (const chunk of chunks.slice(1)) {
-            await interaction.followUp({ content: chunk })
+            await interaction.followUp({
+                content: chunk,
+                allowedMentions: DiscordUtil.suppressedMentions(),
+            })
         }
     }
 
@@ -483,7 +487,10 @@ export class GrokManager {
         })
         if (reply == null) return
         for (const chunk of chunks.slice(1)) {
-            await channel.send(chunk)
+            await channel.send({
+                content: chunk,
+                allowedMentions: DiscordUtil.suppressedMentions(),
+            })
         }
     }
 }

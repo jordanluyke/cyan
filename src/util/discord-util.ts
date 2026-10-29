@@ -4,6 +4,7 @@ import {
     Guild,
     GuildMember,
     Message,
+    MessageMentionOptions,
     MessageReplyOptions,
     RESTJSONErrorCodes,
     SendableChannels,
@@ -15,6 +16,14 @@ export const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const TYPING_REFRESH_MS = 8000
 
 export class DiscordUtil {
+    /**
+     * A normal channel message parses users, roles, and @everyone when this is omitted.
+     * Model text is user-influenced, so replies must not ping.
+     */
+    public static suppressedMentions(): MessageMentionOptions {
+        return { parse: [], repliedUser: false }
+    }
+
     /** Reply to a message; no-ops if the original was deleted. */
     public static async tryReply(
         message: Message,
@@ -23,7 +32,7 @@ export class DiscordUtil {
         try {
             return await message.reply({
                 ...options,
-                allowedMentions: { repliedUser: false, ...options.allowedMentions },
+                allowedMentions: this.suppressedMentions(),
             })
         } catch (err) {
             if (err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.UnknownMessage) {
