@@ -12,7 +12,6 @@ import {
     VoiceConnection,
     VoiceConnectionStatus,
 } from '@discordjs/voice'
-import youtubedl from 'youtube-dl-exec'
 import { ClientUser, GuildMember, PermissionFlagsBits, TextChannel } from 'discord.js'
 import { youtube_v3 } from '@googleapis/youtube'
 import { BotStateManager } from '../bot-state/bot-state-manager.js'
@@ -23,7 +22,7 @@ import { Readable } from 'stream'
 import { FfmpegUtil } from '../util/ffmpeg-util.js'
 import { InputFlag } from './model/input-flag.js'
 import { YoutubeUtil } from '../util/youtube-util.js'
-import { ytDlpSpawnEnv } from '../util/yt-dlp-env.js'
+import { downloadYtDlpStdout } from '../util/yt-dlp-download.js'
 import {
     AudioDownloadTooLargeError,
     audioDownloadFilename,
@@ -38,7 +37,6 @@ import {
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
     shouldDeferPlaybackUntilVoiceReady,
-    preventUnhandledSubprocessRejection,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
     shouldStopPlayerAfterVoiceDisconnectFailure,
@@ -772,73 +770,7 @@ export class AudioManager {
         attempt: PlayAttempt,
         options?: { maxBytes?: number },
     ): Promise<Buffer> {
-        return new Promise((resolve, reject) => {
-            const chunks: Buffer[] = []
-            const stderrChunks: Buffer[] = []
-            let totalBytes = 0
-            let capped = false
-            // reject: false — tinyspawn also returns a Promise; without this a non-zero
-            // exit becomes an unhandled rejection and kills the process.
-            // Spawn failures still reject that promise; see preventUnhandledSubprocessRejection.
-            // One selector for /play and /download_audio. Opus, then any audio-only
-            // format, then a muxed file. Leave the player client to yt-dlp: pinning
-            // android currently drops audio-only URLs.
-            const subprocess = youtubedl.exec(
-                `https://www.youtube.com/watch?v=${videoId}`,
-                {
-                    output: '-',
-                    format: 'bestaudio[acodec=opus]/bestaudio/best',
-                    formatSort: ['abr'],
-                    // Backstop when API metadata missed a live item (e.g. playlist
-                    // entries lack liveBroadcastContent) — live stdout never ends.
-                    matchFilter: '!is_live',
-                    // Keep stdout clean for the audio pipe; stderr still gets real errors.
-                    quiet: true,
-                    noWarnings: true,
-                } as Parameters<typeof youtubedl.exec>[1],
-                { reject: false, env: ytDlpSpawnEnv() } as Parameters<typeof youtubedl.exec>[2],
-            )
-            preventUnhandledSubprocessRejection(subprocess)
-            attempt.attachDownload(subprocess)
-            subprocess.stdout.on('data', (chunk: Buffer) => {
-                if (capped) return
-                const maxBytes = options?.maxBytes
-                if (maxBytes != null && totalBytes + chunk.length > maxBytes) {
-                    // Kill before the buffer can grow into a video-sized download.
-                    capped = true
-                    attempt.cancel()
-                    reject(new AudioDownloadTooLargeError())
-                    return
-                }
-                totalBytes += chunk.length
-                chunks.push(chunk)
-            })
-            subprocess.stderr?.on('data', (chunk: Buffer) => {
-                stderrChunks.push(chunk)
-            })
-            subprocess.on('error', (err) => {
-                attempt.clearDownload()
-                if (capped) return
-                reject(err)
-            })
-            subprocess.on('close', (code, signal) => {
-                // Drop the handle so later cancel() does not signal a dead pid.
-                attempt.clearDownload()
-                if (capped) return
-                if (code === 0) {
-                    resolve(Buffer.concat(chunks))
-                    return
-                }
-                // SIGTERM from PlayAttempt.cancel() — treat as cancellation, not failure.
-                if (signal === 'SIGTERM' || subprocess.killed) {
-                    reject(new Error('yt-dlp download cancelled'))
-                    return
-                }
-                const stderr = Buffer.concat(stderrChunks).toString('utf8').trim()
-                const detail = stderr || '(no stderr)'
-                reject(new Error(`yt-dlp exited with code ${code}: ${detail}`))
-            })
-        })
+        return downloadYtDlpStdout(videoId, attempt, options)
     }
 
     private async resolveSingleVideo(query: string): Promise<{
