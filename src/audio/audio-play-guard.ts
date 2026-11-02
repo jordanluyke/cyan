@@ -173,8 +173,9 @@ export function voiceRejoinDelayMs(attempt: number, retryMs: number): number | n
  * the promise. Node's default `unhandledRejection=throw` then kills the
  * process — one `/play` takes down every guild.
  *
- * Callers still observe the failure on the ChildProcess `error` / `close`
- * events and advance the queue from there.
+ * Streaming downloads do not use that promise: tinyspawn stringifies all of
+ * stdout when the child is killed. Spawn yt-dlp directly (`yt-dlp-download`)
+ * and keep this only if a tinyspawn promise is introduced again.
  */
 export function preventUnhandledSubprocessRejection(subprocess: Promise<unknown>): void {
     void subprocess.catch((err) => {
