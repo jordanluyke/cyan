@@ -16,6 +16,7 @@ import { readResponseBodyWithLimit, ResponseTooLargeError } from '../util/respon
 import { buildDrawModal, parseDrawModalCustomId } from './draw-modal.js'
 import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
 import { replyChainImages } from './reply-chain-images.js'
+import { shouldFollowReplyReference } from './reply-reference.js'
 
 @injectable()
 export class GrokManager {
@@ -296,7 +297,7 @@ export class GrokManager {
     ): Promise<GrokPrompt | null> {
         const includeStarting = opts?.includeStartingMessage !== false
         const chain = includeStarting
-            ? await this.fetchReplyChain(start)
+            ? await this.fetchReplyChain(start, start.channelId)
             : await this.fetchReplyChainFromReference(start)
 
         if (chain.length === 0) return null
@@ -357,12 +358,12 @@ export class GrokManager {
     }
 
     /** Oldest → newest including the starting message, walking up references. */
-    private async fetchReplyChain(start: Message): Promise<Message[]> {
+    private async fetchReplyChain(start: Message, allowedChannelId: string): Promise<Message[]> {
         const chain: Message[] = [start]
         const seen = new Set<string>([start.id])
         let current = start
         while (chain.length < GrokManager.MAX_REPLY_CHAIN) {
-            const parent = await this.fetchReplyParent(current)
+            const parent = await this.fetchReplyParent(current, allowedChannelId)
             if (parent == null || seen.has(parent.id)) break
             seen.add(parent.id)
             chain.push(parent)
@@ -373,16 +374,24 @@ export class GrokManager {
 
     /** Oldest → newest from the message this one replies to (excludes start). */
     private async fetchReplyChainFromReference(start: Message): Promise<Message[]> {
-        const referenced = await this.fetchReplyParent(start)
+        const referenced = await this.fetchReplyParent(start, start.channelId)
         if (referenced == null) return []
-        return this.fetchReplyChain(referenced)
+        return this.fetchReplyChain(referenced, start.channelId)
     }
 
-    /** Full fetch so a cached reply still has its parent reference and attachments. */
-    private async fetchReplyParent(message: Message): Promise<Message | null> {
+    /**
+     * Full fetch so a cached reply still has its parent and attachments.
+     * Only `allowedChannelId`: a forward's reference points at another channel
+     * the bot can read when the people seeing this reply cannot.
+     */
+    private async fetchReplyParent(
+        message: Message,
+        allowedChannelId: string
+    ): Promise<Message | null> {
         const messageId = message.reference?.messageId
         const channelId = message.reference?.channelId
         if (messageId == null || channelId == null) return null
+        if (!shouldFollowReplyReference(channelId, allowedChannelId)) return null
         const channel = message.client.channels.resolve(channelId)
         if (channel == null || !channel.isTextBased()) return null
         try {
