@@ -1,3 +1,4 @@
+import { VoiceConnectionDisconnectReason } from '@discordjs/voice'
 import { PlayAttempt } from './model/play-attempt.js'
 
 /**
@@ -133,6 +134,39 @@ export function shouldScheduleVoiceIdleDisconnect(queueLengthAfterDequeue: numbe
  */
 export function shouldStopPlayerAfterVoiceDisconnectFailure(playerStatus: string): boolean {
     return shouldStopPlayerForSkip(playerStatus)
+}
+
+/**
+ * Voice websocket closed while the gateway shard could not send the library's
+ * own rejoin (`sendPayload` returns false only when the shard is not Ready).
+ * That lands on Disconnected with AdapterUnavailable, and nothing retries when
+ * the shard resumes — the 5s grace cannot see a Signalling event that already
+ * happened. Stopping the player then dequeues the current track.
+ * Keep the AutoPaused resource and rejoin it. A 4014 close (kick / deleted
+ * channel) stays on the skip path.
+ */
+export function shouldKeepCurrentTrackOnDisconnect(
+    disconnectReason: number | null | undefined,
+): boolean {
+    return disconnectReason === VoiceConnectionDisconnectReason.AdapterUnavailable
+}
+
+/**
+ * The disconnect handler must not stop the player when this connection is no
+ * longer the one that should move the queue: it was destroyed (a rejoin is
+ * already scheduled), replaced, or it recovered past Disconnected.
+ */
+export function shouldAbandonVoiceDisconnectRecovery(
+    connectionStatus: string | null | undefined,
+    stillTracked: boolean,
+): boolean {
+    if (!stillTracked) return true
+    return (
+        connectionStatus === 'destroyed' ||
+        connectionStatus === 'signalling' ||
+        connectionStatus === 'connecting' ||
+        connectionStatus === 'ready'
+    )
 }
 
 /**

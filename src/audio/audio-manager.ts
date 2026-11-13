@@ -39,6 +39,8 @@ import {
     shouldDeferPlaybackUntilVoiceReady,
     shouldSkipQueueItemForVoice,
     shouldStartPlaybackOnEnqueue,
+    shouldAbandonVoiceDisconnectRecovery,
+    shouldKeepCurrentTrackOnDisconnect,
     shouldStopPlayerAfterVoiceDisconnectFailure,
     shouldStopPlayerForSkip,
     voiceRejoinDelayMs,
@@ -571,8 +573,10 @@ export class AudioManager {
         voiceConnection.on('error', (error) => {
             console.error('Voice connection error:', error)
         })
-        // Kick / 4014 leave the connection Disconnected with no auto-rejoin.
-        // The player then AutoPauses (no Ready subscriber) and the queue stalls.
+        // Disconnected has two shapes. 4014 (kick / deleted channel) never
+        // auto-rejoins, so the handler stops the player and Idle advances.
+        // AdapterUnavailable means the gateway could not send the library's
+        // rejoin; that handler resumes the same track instead of skipping it.
         voiceConnection.on(VoiceConnectionStatus.Disconnected, () => {
             void this.handleVoiceDisconnect(guildId, voiceConnection)
         })
@@ -589,13 +593,28 @@ export class AudioManager {
 
     /**
      * Recover from Disconnected, or destroy and unblock the player so Idle can
-     * advance the queue. Network blips transition to Signalling themselves;
-     * channel moves often reach Connecting within the grace period.
+     * advance the queue. Network blips that still have a Ready shard transition
+     * to Signalling themselves; channel moves often reach Connecting within
+     * the grace period.
+     *
+     * AdapterUnavailable is different: the library already tried to rejoin and
+     * the shard rejected the payload. It will not try again. Stop() would
+     * dequeue the song, so resume that same AutoPaused resource instead.
      */
     private async handleVoiceDisconnect(
         guildId: string,
         voiceConnection: VoiceConnection,
     ): Promise<void> {
+        const initial = voiceConnection.state
+        if (
+            initial.status === VoiceConnectionStatus.Disconnected &&
+            shouldKeepCurrentTrackOnDisconnect(initial.reason) &&
+            getVoiceConnection(guildId) === voiceConnection
+        ) {
+            this.scheduleVoiceRejoin(guildId, voiceConnection.joinConfig.channelId, 0)
+            return
+        }
+
         try {
             await Promise.race([
                 entersState(
@@ -612,6 +631,15 @@ export class AudioManager {
             return
         } catch {
             // Grace elapsed without reclaim — treat as permanent disconnect.
+        }
+
+        if (
+            shouldAbandonVoiceDisconnectRecovery(
+                voiceConnection.state.status,
+                getVoiceConnection(guildId) === voiceConnection,
+            )
+        ) {
+            return
         }
 
         try {
