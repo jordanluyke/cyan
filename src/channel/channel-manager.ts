@@ -15,6 +15,7 @@ import {
     resolveChannelExportByteLimit,
     shouldStopChannelExport,
 } from './channel-export-limit.js'
+import { withSnapshotCacheDisabled } from './snapshot-cache.js'
 
 @injectable()
 export class ChannelManager {
@@ -52,6 +53,8 @@ export class ChannelManager {
             // cache:false — fetch() otherwise retains every message in
             // channel.messages.cache for the life of the process (no default
             // message sweeper). A long channel history OOMs the single bot.
+            // Forwards still need the guard below: constructing them writes the
+            // snapshot into the referenced channel's cache unless we opt out.
             const maxBytes = resolveChannelExportByteLimit(interaction.attachmentSizeLimit)
             const collected: Record<string, unknown>[] = []
             let bufferedBytes = 0
@@ -59,41 +62,43 @@ export class ChannelManager {
             let before: string | undefined
             const pageSize = 100
 
-            while (!truncated) {
-                const fetched = await channel.messages.fetch({
-                    limit: pageSize,
-                    cache: false,
-                    ...(before != null ? { before } : {}),
-                })
-                const page = Array.from(fetched.values())
-                const nextBefore = exportPageCursor(
-                    page.map((msg) => msg.id),
-                    before,
-                )
-                if (nextBefore == null) break
+            await withSnapshotCacheDisabled(async () => {
+                while (!truncated) {
+                    const fetched = await channel.messages.fetch({
+                        limit: pageSize,
+                        cache: false,
+                        ...(before != null ? { before } : {}),
+                    })
+                    const page = Array.from(fetched.values())
+                    const nextBefore = exportPageCursor(
+                        page.map((msg) => msg.id),
+                        before,
+                    )
+                    if (nextBefore == null) break
 
-                for (const msg of page) {
-                    const json = this.serializeMessage(msg)
-                    if (json == null) continue
-                    const nextBytes = Buffer.byteLength(JSON.stringify(json))
-                    if (
-                        shouldStopChannelExport({
-                            count: collected.length,
-                            bufferedBytes,
-                            nextMessageBytes: nextBytes,
-                            maxBytes,
-                        })
-                    ) {
-                        truncated = true
-                        break
+                    for (const msg of page) {
+                        const json = this.serializeMessage(msg)
+                        if (json == null) continue
+                        const nextBytes = Buffer.byteLength(JSON.stringify(json))
+                        if (
+                            shouldStopChannelExport({
+                                count: collected.length,
+                                bufferedBytes,
+                                nextMessageBytes: nextBytes,
+                                maxBytes,
+                            })
+                        ) {
+                            truncated = true
+                            break
+                        }
+                        collected.push(json)
+                        bufferedBytes += nextBytes
                     }
-                    collected.push(json)
-                    bufferedBytes += nextBytes
-                }
 
-                before = nextBefore
-                if (page.length < pageSize) break
-            }
+                    before = nextBefore
+                    if (page.length < pageSize) break
+                }
+            })
 
             const timestamp = new Date().getTime()
             const encode = (messages: readonly Record<string, unknown>[]) =>
