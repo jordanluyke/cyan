@@ -1,8 +1,11 @@
+import { VoiceConnectionDisconnectReason } from '@discordjs/voice'
 import {
     isPlayStillValid,
+    shouldAbandonVoiceDisconnectRecovery,
     shouldAdvanceQueueFromPlayerErrorHandler,
     shouldDequeueOnIdle,
     shouldForceStopOnSkip,
+    shouldKeepCurrentTrackOnDisconnect,
     shouldKeepHeadOnClear,
     shouldRejoinDisconnectedVoice,
     shouldScheduleVoiceIdleDisconnect,
@@ -513,6 +516,62 @@ describe('audio-play-guard', () => {
             console.error = originalError
             process.off('unhandledRejection', onUnhandled)
         }
+    })
+
+    test('adapter-unavailable disconnect keeps the current track instead of skipping it', () => {
+        // Voice WS closed while the shard was not Ready: the library's rejoin
+        // payload fails and the connection stays Disconnected. Nothing emits
+        // Signalling again when the shard resumes. stop() would Idle-dequeue
+        // the song that is still buffered on the AutoPaused player.
+        expect(
+            shouldKeepCurrentTrackOnDisconnect(VoiceConnectionDisconnectReason.AdapterUnavailable),
+        ).toBe(true)
+        expect(
+            shouldKeepCurrentTrackOnDisconnect(VoiceConnectionDisconnectReason.WebSocketClose),
+        ).toBe(false)
+        expect(shouldKeepCurrentTrackOnDisconnect(VoiceConnectionDisconnectReason.Manual)).toBe(
+            false,
+        )
+        expect(
+            shouldKeepCurrentTrackOnDisconnect(VoiceConnectionDisconnectReason.EndpointRemoved),
+        ).toBe(false)
+        expect(shouldKeepCurrentTrackOnDisconnect(undefined)).toBe(false)
+        expect(shouldKeepCurrentTrackOnDisconnect(null)).toBe(false)
+
+        const queue = ['current', 'next']
+        const attempt = new PlayAttempt()
+        attempt.markPlaying()
+        const keep = shouldKeepCurrentTrackOnDisconnect(
+            VoiceConnectionDisconnectReason.AdapterUnavailable,
+        )
+        if (!keep && shouldStopPlayerAfterVoiceDisconnectFailure('autopaused')) {
+            if (shouldDequeueOnIdle(attempt)) queue.shift()
+        }
+        expect(keep).toBe(true)
+        expect(queue).toEqual(['current', 'next'])
+        expect(attempt.isPlaying).toBe(true)
+
+        // 4014 still stops so Idle can advance. A kick must not resume.
+        const kicked = ['current', 'next']
+        if (
+            !shouldKeepCurrentTrackOnDisconnect(VoiceConnectionDisconnectReason.WebSocketClose) &&
+            shouldStopPlayerAfterVoiceDisconnectFailure('autopaused') &&
+            shouldDequeueOnIdle(attempt)
+        ) {
+            kicked.shift()
+        }
+        expect(kicked).toEqual(['next'])
+    })
+
+    test('stale disconnect recovery must not stop a track another path is rejoining', () => {
+        expect(shouldAbandonVoiceDisconnectRecovery('destroyed', true)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('destroyed', false)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('disconnected', false)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('ready', true)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('signalling', true)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('connecting', true)).toBe(true)
+        expect(shouldAbandonVoiceDisconnectRecovery('disconnected', true)).toBe(false)
+        expect(shouldAbandonVoiceDisconnectRecovery(null, true)).toBe(false)
     })
 
     test('post-download play must rejoin a disconnected connection, not subscribe it', () => {
