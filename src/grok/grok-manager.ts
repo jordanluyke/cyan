@@ -198,9 +198,7 @@ export class GrokManager {
     }
 
     private async imageUrlToDataUri(url: string): Promise<string> {
-        const response = await fetch(url, {
-            signal: AbortSignal.timeout(GrokManager.SOURCE_IMAGE_TIMEOUT_MS),
-        })
+        const response = await this.fetchDiscordHostedImage(url)
         if (!response.ok) {
             await response.body?.cancel().catch(() => {})
             throw new Error(`failed to fetch source image (${response.status})`)
@@ -245,6 +243,46 @@ export class GrokManager {
     private static readonly MAX_CHANNEL_CONTEXT = 15
     private static readonly MAX_CONTEXT_MSG_LENGTH = 300
     private static readonly SOURCE_IMAGE_TIMEOUT_MS = 30_000
+    /** Requests, not redirects. Covers a CDN hop and then stops. */
+    private static readonly MAX_IMAGE_FETCH_HOPS = 4
+
+    /**
+     * Download a source image without following a redirect off Discord's media hosts.
+     * `fetch` follows redirects by default, including to link-local addresses.
+     */
+    private async fetchDiscordHostedImage(url: string): Promise<Response> {
+        let current = url
+        for (let hop = 0; hop < GrokManager.MAX_IMAGE_FETCH_HOPS; hop++) {
+            if (!DiscordUtil.isDiscordHostedMediaUrl(current)) {
+                throw new BotError(
+                    'unsupported image url',
+                    'i can only draw from pics hosted on Discord'
+                )
+            }
+            const response = await fetch(current, {
+                redirect: 'manual',
+                signal: AbortSignal.timeout(GrokManager.SOURCE_IMAGE_TIMEOUT_MS),
+            })
+            let next: string | null
+            try {
+                next = DiscordUtil.discordMediaRedirectTarget(
+                    current,
+                    response.status,
+                    response.headers.get('location')
+                )
+            } catch (err) {
+                await response.body?.cancel().catch(() => {})
+                throw new BotError(
+                    err instanceof Error ? err.message : 'unsupported image url',
+                    'i can only draw from pics hosted on Discord'
+                )
+            }
+            if (next == null) return response
+            await response.body?.cancel().catch(() => {})
+            current = next
+        }
+        throw new BotError('unsupported image url', 'i can only draw from pics hosted on Discord')
+    }
 
     private requireApiKey(): void {
         if (this.config.xaiApiKey == null) {
