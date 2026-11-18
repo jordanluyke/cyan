@@ -53,8 +53,9 @@ export class ChannelManager {
             // cache:false — fetch() otherwise retains every message in
             // channel.messages.cache for the life of the process (no default
             // message sweeper). A long channel history OOMs the single bot.
-            // Forwards still need the guard below: constructing them writes the
-            // snapshot into the referenced channel's cache unless we opt out.
+            // The guard stays on afterwards: any later forward (gateway,
+            // mention context, Draw) would otherwise write its snapshot
+            // onto the live cached original.
             const maxBytes = resolveChannelExportByteLimit(interaction.attachmentSizeLimit)
             const collected: Record<string, unknown>[] = []
             let bufferedBytes = 0
