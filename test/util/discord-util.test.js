@@ -35,3 +35,149 @@ describe('suppressed mentions', () => {
         ).toEqual({ parse: [], replied_user: false })
     })
 })
+
+describe('discord hosted media urls', () => {
+    test('allows Discord attachment and proxy hosts', () => {
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl(
+                'https://cdn.discordapp.com/attachments/1/2/pic.png',
+            ),
+        ).toBe(true)
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl(
+                'https://media.discordapp.net/attachments/1/2/pic.jpg',
+            ),
+        ).toBe(true)
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl(
+                'https://images-ext-1.discordapp.net/external/abc/https/example.com/pic.png',
+            ),
+        ).toBe(true)
+    })
+
+    test('rejects hosts the bot must not fetch', () => {
+        expect(DiscordUtil.isDiscordHostedMediaUrl('http://cdn.discordapp.com/a.png')).toBe(false)
+        expect(DiscordUtil.isDiscordHostedMediaUrl('https://evil.example/a.png')).toBe(false)
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl('https://cdn.discordapp.com.evil.example/a.png'),
+        ).toBe(false)
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl('https://169.254.169.254/latest/meta-data'),
+        ).toBe(false)
+        expect(
+            DiscordUtil.isDiscordHostedMediaUrl('https://user:pass@cdn.discordapp.com/a.png'),
+        ).toBe(false)
+        expect(DiscordUtil.isDiscordHostedMediaUrl('https://cdn.discordapp.com:444/a.png')).toBe(
+            false,
+        )
+        expect(DiscordUtil.isDiscordHostedMediaUrl('file:///etc/passwd.png')).toBe(false)
+        expect(DiscordUtil.isDiscordHostedMediaUrl('not a url')).toBe(false)
+    })
+
+    test('redirects may stay on Discord and must not leave', () => {
+        const from = 'https://cdn.discordapp.com/attachments/1/2/pic.png'
+        expect(DiscordUtil.discordMediaRedirectTarget(from, 200, null)).toBeNull()
+        expect(
+            DiscordUtil.discordMediaRedirectTarget(
+                from,
+                302,
+                'https://media.discordapp.net/attachments/1/2/pic.png',
+            ),
+        ).toBe('https://media.discordapp.net/attachments/1/2/pic.png')
+        expect(
+            DiscordUtil.discordMediaRedirectTarget(from, 302, '/attachments/1/2/other.png'),
+        ).toBe('https://cdn.discordapp.com/attachments/1/2/other.png')
+        expect(() =>
+            DiscordUtil.discordMediaRedirectTarget(
+                from,
+                302,
+                'http://169.254.169.254/latest/meta-data',
+            ),
+        ).toThrow(/left Discord/)
+        expect(() =>
+            DiscordUtil.discordMediaRedirectTarget(from, 302, 'https://evil.example/pic.png'),
+        ).toThrow(/left Discord/)
+        expect(() =>
+            DiscordUtil.discordMediaRedirectTarget(from, 302, '//169.254.169.254/latest/meta-data'),
+        ).toThrow(/left Discord/)
+        expect(() => DiscordUtil.discordMediaRedirectTarget(from, 302, null)).toThrow(
+            /missing location/,
+        )
+        expect(() =>
+            DiscordUtil.discordMediaRedirectTarget(
+                from,
+                302,
+                'https://user:pass@cdn.discordapp.com/a.png',
+            ),
+        ).toThrow(/left Discord/)
+    })
+
+    test('embed images use the Discord proxy, not the origin url', () => {
+        const proxy =
+            'https://images-ext-1.discordapp.net/external/abc/https/evil.example/secret.png'
+        const message = {
+            attachments: { values: () => [].values() },
+            embeds: [
+                {
+                    image: {
+                        url: 'https://evil.example/secret.png',
+                        proxyURL: proxy,
+                    },
+                },
+            ],
+        }
+        expect(DiscordUtil.getMessageImages(message)).toEqual([proxy])
+    })
+
+    test('a Discord proxy is used even when its path has no image extension', () => {
+        const proxy = 'https://media.discordapp.net/external/abc'
+        const message = {
+            attachments: { values: () => [].values() },
+            embeds: [{ image: { url: 'https://evil.example/secret.png', proxyURL: proxy } }],
+        }
+        expect(DiscordUtil.getMessageImages(message)).toEqual([proxy])
+    })
+
+    test('a Discord-hosted embed url is kept when there is no proxy', () => {
+        const url = 'https://cdn.discordapp.com/attachments/1/2/pic.png'
+        const message = {
+            attachments: { values: () => [].values() },
+            embeds: [{ image: { url, proxyURL: null } }],
+        }
+        expect(DiscordUtil.getMessageImages(message)).toEqual([url])
+    })
+
+    test('an embed with only an external image url is not returned', () => {
+        const message = {
+            attachments: { values: () => [].values() },
+            embeds: [{ image: { url: 'https://evil.example/secret.png', proxyURL: null } }],
+        }
+        expect(DiscordUtil.getMessageImages(message)).toEqual([])
+    })
+
+    test('attachments on other hosts are ignored', () => {
+        const message = {
+            attachments: {
+                values: () =>
+                    [
+                        {
+                            contentType: 'image/png',
+                            name: 'pic.png',
+                            size: 10,
+                            url: 'https://evil.example/pic.png',
+                        },
+                        {
+                            contentType: 'image/png',
+                            name: 'ok.png',
+                            size: 10,
+                            url: 'https://cdn.discordapp.com/attachments/1/2/ok.png',
+                        },
+                    ].values(),
+            },
+            embeds: [],
+        }
+        expect(DiscordUtil.getMessageImages(message)).toEqual([
+            'https://cdn.discordapp.com/attachments/1/2/ok.png',
+        ])
+    })
+})

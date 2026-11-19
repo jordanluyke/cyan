@@ -107,14 +107,90 @@ export class DiscordUtil {
         for (const attachment of message.attachments.values()) {
             if (!this.isSupportedImage(attachment.contentType, attachment.name)) continue
             if (attachment.size > MAX_IMAGE_BYTES) continue
+            // Attachment URLs are Discord CDN links. Skip anything else so Draw
+            // cannot be pointed at an arbitrary host.
+            if (!this.isDiscordHostedMediaUrl(attachment.url)) continue
             urls.push(attachment.url)
         }
         for (const embed of message.embeds) {
-            if (embed.image?.url != null && this.isSupportedImageUrl(embed.image.url)) {
-                urls.push(embed.image.url)
-            }
+            const hosted = this.discordHostedEmbedImage(embed.image)
+            if (hosted != null) urls.push(hosted)
         }
         return urls
+    }
+
+    /**
+     * True for HTTPS URLs on Discord's attachment and image-proxy hosts.
+     *
+     * Draw downloads the bytes in-process. Embed `image.url` is the page's
+     * original file and can 302 to a private address; only Discord-hosted
+     * URLs are safe to fetch.
+     */
+    public static isDiscordHostedMediaUrl(url: string): boolean {
+        let parsed: URL
+        try {
+            parsed = new URL(url)
+        } catch {
+            return false
+        }
+        if (parsed.protocol !== 'https:') return false
+        if (parsed.username !== '' || parsed.password !== '') return false
+        // An explicit port is not Discord's CDN. `cdn.discordapp.com.evil.com` fails the suffix check.
+        if (parsed.port !== '') return false
+        const host = parsed.hostname.toLowerCase().replace(/\.$/, '')
+        return host.endsWith('.discordapp.com') || host.endsWith('.discordapp.net')
+    }
+
+    /**
+     * Where a 3xx from a Discord media URL is allowed to go.
+     * Returns null when `status` is not a redirect.
+     * Throws when the hop must not be followed.
+     */
+    public static discordMediaRedirectTarget(
+        fromUrl: string,
+        status: number,
+        location: string | null,
+    ): string | null {
+        if (status < 300 || status >= 400) return null
+        if (location == null || location.trim().length === 0) {
+            throw new Error('discord media redirect missing location')
+        }
+        let next: string
+        try {
+            next = new URL(location, fromUrl).href
+        } catch {
+            throw new Error('discord media redirect invalid location')
+        }
+        if (!this.isDiscordHostedMediaUrl(next)) {
+            throw new Error('discord media redirect left Discord')
+        }
+        return next
+    }
+
+    /**
+     * Embed images to show or edit. Prefer Discord's proxy copy so the bot
+     * never requests the origin host. An unproxied external image is dropped.
+     */
+    private static discordHostedEmbedImage(
+        image: { url?: string | null; proxyURL?: string | null } | null | undefined,
+    ): string | null {
+        if (image == null) return null
+        const originalSupported = image.url != null && this.isSupportedImageUrl(image.url)
+        if (
+            image.proxyURL != null &&
+            this.isDiscordHostedMediaUrl(image.proxyURL) &&
+            (this.isSupportedImageUrl(image.proxyURL) || originalSupported)
+        ) {
+            return image.proxyURL
+        }
+        if (
+            image.url != null &&
+            this.isDiscordHostedMediaUrl(image.url) &&
+            this.isSupportedImageUrl(image.url)
+        ) {
+            return image.url
+        }
+        return null
     }
 
     public static isSupportedImageAttachment(attachment: Attachment): boolean {
@@ -128,7 +204,7 @@ export class DiscordUtil {
 
     public static async getMemberDisplayName(
         guild: Guild | null,
-        targetMessage: Message
+        targetMessage: Message,
     ): Promise<string> {
         if (targetMessage.member != null) return targetMessage.member.displayName
         if (guild != null) {
@@ -153,9 +229,7 @@ export class DiscordUtil {
         try {
             const pathname = new URL(url).pathname.toLowerCase()
             return (
-                pathname.endsWith('.jpg') ||
-                pathname.endsWith('.jpeg') ||
-                pathname.endsWith('.png')
+                pathname.endsWith('.jpg') || pathname.endsWith('.jpeg') || pathname.endsWith('.png')
             )
         } catch {
             return false
