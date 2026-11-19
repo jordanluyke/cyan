@@ -12,6 +12,7 @@ import {
 } from 'discord.js'
 import { BotError } from '../audio/model/error/bot-error.js'
 import { ApiV1 } from './api-v1.js'
+import { installMessageSnapshotGuard } from '../channel/snapshot-cache.js'
 import { GrokManager } from '../grok/grok-manager.js'
 import { isDrawModalCustomId } from '../grok/draw-modal.js'
 import { DiscordUtil } from '../util/discord-util.js'
@@ -23,6 +24,9 @@ export class ApiManager {
     constructor(private config: Config) {}
 
     public async init(): Promise<void> {
+        // Before login. messageCreate and interaction payloads construct
+        // forwards, and those snapshots must not overwrite cached messages.
+        installMessageSnapshotGuard()
         const client = await this.createDiscordClient()
         await client.login(this.config.botToken)
     }
