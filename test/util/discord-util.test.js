@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
-import { DiscordUtil } from '../../target/util/discord-util.js'
+import { installMessageSnapshotGuard } from '../../target/channel/snapshot-cache.js'
+import { DiscordUtil, MAX_IMAGE_BYTES } from '../../target/util/discord-util.js'
 
 const require = createRequire(import.meta.url)
 const { MessagePayload } = require('discord.js')
@@ -179,5 +180,172 @@ describe('discord hosted media urls', () => {
         expect(DiscordUtil.getMessageImages(message)).toEqual([
             'https://cdn.discordapp.com/attachments/1/2/ok.png',
         ])
+    })
+})
+
+describe('forwarded message content', () => {
+    const { ChannelType, Client, GatewayIntentBits } = require('discord.js')
+    const author = { id: '444', username: 'ada', discriminator: '0', avatar: null }
+
+    function setup() {
+        const client = new Client({
+            intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+        })
+        const guild = client.guilds._add({ id: '222', name: 'g' })
+        const general = client.channels._add(
+            { id: '333', type: ChannelType.GuildText, guild_id: '222', name: 'general' },
+            guild,
+        )
+        const memes = client.channels._add(
+            { id: '334', type: ChannelType.GuildText, guild_id: '222', name: 'memes' },
+            guild,
+        )
+        return { general, memes }
+    }
+
+    function snapshotMessage(content, extra = {}) {
+        return {
+            content,
+            attachments: [],
+            embeds: [],
+            mentions: [],
+            mention_roles: [],
+            timestamp: new Date().toISOString(),
+            type: 0,
+            ...extra,
+        }
+    }
+
+    function forward(channelId, snapshots) {
+        return {
+            id: '1000',
+            channel_id: channelId,
+            guild_id: '222',
+            content: '',
+            timestamp: new Date().toISOString(),
+            author,
+            mentions: [],
+            mention_roles: [],
+            attachments: [],
+            embeds: [],
+            message_reference: {
+                type: 1,
+                message_id: '888',
+                channel_id: '334',
+                guild_id: '222',
+            },
+            message_snapshots: snapshots.map((message) => ({ message })),
+        }
+    }
+
+    test('a normal message is unchanged when it has no snapshots', () => {
+        installMessageSnapshotGuard()
+        const { general } = setup()
+        const message = general.messages._add(
+            {
+                id: '777',
+                channel_id: '333',
+                guild_id: '222',
+                content: 'just a message',
+                timestamp: new Date().toISOString(),
+                author,
+                mentions: [],
+                mention_roles: [],
+                attachments: [],
+                embeds: [],
+            },
+            true,
+        )
+        expect(DiscordUtil.getMessageText(message)).toBe('just a message')
+        expect(DiscordUtil.getMessageImages(message)).toEqual([])
+    })
+
+    test('reads every snapshot and does not use the live message from the other channel', () => {
+        installMessageSnapshotGuard()
+        const { general, memes } = setup()
+        const live = memes.messages._add(
+            {
+                id: '888',
+                channel_id: '334',
+                guild_id: '222',
+                content: 'LIVE text this channel must not fetch',
+                timestamp: new Date().toISOString(),
+                author,
+                mentions: [],
+                mention_roles: [],
+                attachments: [
+                    {
+                        id: 'live',
+                        filename: 'live.png',
+                        size: 10,
+                        url: 'https://cdn.discordapp.com/live.png',
+                        proxy_url: 'https://media.discordapp.net/live.png',
+                        content_type: 'image/png',
+                    },
+                ],
+                embeds: [],
+            },
+            true,
+        )
+
+        const message = general.messages._add(
+            forward('333', [
+                snapshotMessage('first note', {
+                    attachments: [
+                        {
+                            id: 'a2',
+                            filename: 'one.png',
+                            size: 10,
+                            url: 'https://cdn.discordapp.com/one.png',
+                            proxy_url: 'https://media.discordapp.net/one.png',
+                            content_type: 'image/png',
+                        },
+                    ],
+                }),
+                snapshotMessage('', {
+                    embeds: [
+                        {
+                            title: 'second title',
+                            description: 'second body',
+                            image: {
+                                url: 'https://evil.example/secret.png',
+                                proxy_url:
+                                    'https://images-ext-1.discordapp.net/external/abc/pic.png',
+                            },
+                        },
+                    ],
+                    attachments: [
+                        {
+                            id: 'huge',
+                            filename: 'huge.png',
+                            size: MAX_IMAGE_BYTES + 1,
+                            url: 'https://cdn.discordapp.com/huge.png',
+                            proxy_url: 'https://media.discordapp.net/huge.png',
+                            content_type: 'image/png',
+                        },
+                        {
+                            id: 'off',
+                            filename: 'off.png',
+                            size: 10,
+                            url: 'https://evil.example/off.png',
+                            content_type: 'image/png',
+                        },
+                    ],
+                }),
+            ]),
+            true,
+        )
+
+        expect(DiscordUtil.getMessageText(message)).toBe(
+            'Forwarded:\nfirst note\n\nForwarded:\nsecond title\nsecond body',
+        )
+        expect(DiscordUtil.getMessageImages(message)).toEqual([
+            'https://cdn.discordapp.com/one.png',
+            'https://images-ext-1.discordapp.net/external/abc/pic.png',
+        ])
+        expect(live.content).toBe('LIVE text this channel must not fetch')
+        expect(live.attachments.size).toBe(1)
+        expect(DiscordUtil.getMessageText(live)).toBe('LIVE text this channel must not fetch')
+        expect(DiscordUtil.getMessageImages(live)).toEqual(['https://cdn.discordapp.com/live.png'])
     })
 })

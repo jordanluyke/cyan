@@ -1,6 +1,12 @@
-import { MessageManager } from 'discord.js'
+import { Collection, Message, MessageManager } from 'discord.js'
 
 type MessageAdd = (this: unknown, data: unknown, cache?: boolean) => unknown
+
+/** Constructor is private in the typings and public at runtime. */
+const MessageConstructor = Message as unknown as new (
+    client: Message['client'],
+    data: unknown,
+) => Message
 
 /**
  * Non-zero while a forward payload is inside `Message` construction.
@@ -40,11 +46,63 @@ function patchedAdd(this: unknown, data: unknown, cache?: boolean): unknown {
     if (forwarding) forwardDepth++
     if (uncached) uncachedDepth++
     try {
-        return add.call(this, data, cache)
+        const created = add.call(this, data, cache)
+        // Still inside forwardDepth. Rebuilding snapshots calls `_add` again,
+        // and that write must stay uncached.
+        if (forwarding) keepEveryForwardSnapshot(created, data)
+        return created
     } finally {
         if (forwarding) forwardDepth--
         if (uncached) uncachedDepth--
     }
+}
+
+/**
+ * discord.js stores every snapshot under the forwarded message's id, so a
+ * multi-message forward keeps only the last one. Ask Cyan, Draw, and export
+ * then drop the rest. Rebuild the collection while nested adds are forced
+ * uncached — a cache hit would patch the live original.
+ */
+function keepEveryForwardSnapshot(created: unknown, data: unknown): void {
+    if (created == null || typeof created !== 'object') return
+    const raw = (data as { message_snapshots?: unknown }).message_snapshots
+    if (!Array.isArray(raw) || raw.length <= 1) return
+
+    const message = created as Message
+    const reference = message.reference
+    if (reference?.messageId == null || reference.channelId == null) return
+
+        const channel = message.client.channels.resolve(reference.channelId)
+        const manager =
+            channel != null && channel.isTextBased()
+                ? (channel.messages as unknown as {
+                      _add(data: unknown, cache?: boolean): Message
+                  })
+                : null
+        const snapshots = new Collection<string, Message>()
+    for (let index = 0; index < raw.length; index++) {
+        const entry = raw[index]
+        const body =
+            entry != null && typeof entry === 'object'
+                ? (entry as { message?: Record<string, unknown> }).message
+                : undefined
+        // Drop nested snapshots. Rebuilding them would run `Message` construction
+        // again and discord.js would key those by this same reference id.
+        const { message_snapshots: _nested, ...rest } = body ?? {}
+        const snapshotData = {
+            ...rest,
+            id: reference.messageId,
+            channel_id: reference.channelId,
+            guild_id: reference.guildId,
+        }
+        const snapshot = (
+            manager != null
+                ? manager._add(snapshotData, false)
+                : new MessageConstructor(message.client, snapshotData)
+        ) as Message
+        snapshots.set(String(index), snapshot)
+    }
+    message.messageSnapshots = snapshots as unknown as Message['messageSnapshots']
 }
 
 /**
