@@ -5,6 +5,7 @@ import {
     GuildMember,
     Message,
     MessageMentionOptions,
+    MessageSnapshot,
     MessageReplyOptions,
     RESTJSONErrorCodes,
     SendableChannels,
@@ -84,7 +85,38 @@ export class DiscordUtil {
     }
 
     public static getMessageText(message: Message): string {
-        const content = message.content.trim()
+        const parts: string[] = []
+        const body = this.messageBodyText(message)
+        if (body.length > 0) parts.push(body)
+        // A forward's own content is empty. The text people can see is on the
+        // snapshots. Do not fetch the referenced channel — that message may be
+        // somewhere this channel cannot read.
+        for (const snapshot of this.snapshotMessages(message)) {
+            const snapshotBody = this.messageBodyText(snapshot)
+            if (snapshotBody.length > 0) parts.push(`Forwarded:\n${snapshotBody}`)
+        }
+        return parts.join('\n\n')
+    }
+
+    public static getMessageImages(message: Message): string[] {
+        const urls = this.messageBodyImages(message)
+        const seen = new Set(urls)
+        for (const snapshot of this.snapshotMessages(message)) {
+            for (const url of this.messageBodyImages(snapshot)) {
+                if (seen.has(url)) continue
+                seen.add(url)
+                urls.push(url)
+            }
+        }
+        return urls
+    }
+
+    /**
+     * Text on this message only. Snapshots are a separate message and must not
+     * be walked here, or a snapshot that still has snapshots recurses forever.
+     */
+    private static messageBodyText(message: Message | MessageSnapshot): string {
+        const content = message.content?.trim() ?? ''
         if (content.length > 0) return content
 
         const embedText = message.embeds
@@ -102,7 +134,8 @@ export class DiscordUtil {
         return ''
     }
 
-    public static getMessageImages(message: Message): string[] {
+    /** Images on this message only. Same host rules as a normal attachment. */
+    private static messageBodyImages(message: Message | MessageSnapshot): string[] {
         const urls: string[] = []
         for (const attachment of message.attachments.values()) {
             if (!this.isSupportedImage(attachment.contentType, attachment.name)) continue
@@ -117,6 +150,16 @@ export class DiscordUtil {
             if (hosted != null) urls.push(hosted)
         }
         return urls
+    }
+
+    /**
+     * Snapshots discord.js kept for a forward. Missing on the plain objects
+     * tests build by hand. One level: each value is already a snapshot message.
+     */
+    private static snapshotMessages(message: Message): Array<Message | MessageSnapshot> {
+        const snapshots = message.messageSnapshots
+        if (snapshots == null || typeof snapshots.values !== 'function') return []
+        return [...snapshots.values()]
     }
 
     /**

@@ -122,6 +122,63 @@ describe('forward snapshots during uncached fetch', () => {
         expect(general.messages.cache.has('1000')).toBe(false)
     })
 
+    test('a multi-message forward keeps every snapshot and does not touch the source', () => {
+        installMessageSnapshotGuard()
+        const { general, memes } = setup()
+        const original = general.messages._add(messageData('999', '333', 'edited content'), true)
+
+        memes.messages._add(
+            {
+                ...forwardData('1000', '334', '999', '333', 'second'),
+                message_snapshots: [
+                    {
+                        message: {
+                            content: 'first',
+                            attachments: [
+                                {
+                                    id: 'a2',
+                                    filename: 'one.png',
+                                    size: 10,
+                                    url: 'https://cdn.discordapp.com/one.png',
+                                    proxy_url: 'https://media.discordapp.net/one.png',
+                                    content_type: 'image/png',
+                                },
+                            ],
+                            embeds: [],
+                            mentions: [],
+                            mention_roles: [],
+                            timestamp: new Date().toISOString(),
+                            type: 0,
+                        },
+                    },
+                    {
+                        message: {
+                            content: 'second',
+                            attachments: [],
+                            embeds: [],
+                            mentions: [],
+                            mention_roles: [],
+                            timestamp: new Date().toISOString(),
+                            type: 0,
+                        },
+                    },
+                ],
+            },
+            true,
+        )
+
+        const forward = memes.messages.cache.get('1000')
+        expect([...forward.messageSnapshots.values()].map((snapshot) => snapshot.content)).toEqual([
+            'first',
+            'second',
+        ])
+        expect(original.content).toBe('edited content')
+        expect(original.attachments.size).toBe(1)
+        expect(original.embeds).toHaveLength(1)
+        expect(general.messages.cache.get('999')).toBe(original)
+        expect(general.messages.cache.has('1000')).toBe(false)
+    })
+
     test('a forward of an uncached message does not keep the snapshot', () => {
         installMessageSnapshotGuard()
         const { general } = setup()
