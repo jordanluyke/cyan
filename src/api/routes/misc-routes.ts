@@ -4,6 +4,7 @@ import {
     SlashCommandHandler,
 } from '../model/slash-command-handler.js'
 import { BotError } from '../../audio/model/error/bot-error.js'
+import { DiceRoll, formatDiceRoll, rollDice } from '../../util/dice.js'
 
 export class Commands implements SlashCommandHandler {
     public async handle(interaction: CommandInteraction): Promise<void> {
@@ -26,6 +27,7 @@ export class Commands implements SlashCommandHandler {
                 '`/stop`',
                 '',
                 '### Misc',
+                '`/roll dice:`',
                 '`/draw prompt:` `[aspect:]`',
                 'Right-click a pic → **Apps → Draw**',
                 '',
@@ -36,5 +38,22 @@ export class Commands implements SlashCommandHandler {
             ].join('\n'),
             flags: MessageFlags.Ephemeral,
         })
+    }
+}
+
+export class Roll implements SlashCommandHandler {
+    public async handle(interaction: CommandInteraction): Promise<void> {
+        if (!interaction.isChatInputCommand()) {
+            throw new BotError('invalid interaction', 'Expected a slash command')
+        }
+        const chat = interaction as ChatInputCommandInteraction
+        let roll: DiceRoll
+        try {
+            roll = rollDice(chat.options.getString('dice', true))
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Example: /roll 2d8'
+            throw new BotError(message, message)
+        }
+        await chat.reply({ content: formatDiceRoll(roll) })
     }
 }

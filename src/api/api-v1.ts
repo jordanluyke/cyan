@@ -17,7 +17,7 @@ import {
     SkipAudio,
     StopAudio,
 } from './routes/audio-routes.js'
-import { Commands } from './routes/misc-routes.js'
+import { Commands, Roll } from './routes/misc-routes.js'
 import { DownloadMessages } from './routes/channel-routes.js'
 import { Draw, DrawMessage, Grok } from './routes/grok-routes.js'
 
@@ -106,6 +106,19 @@ export class ApiV1 {
                     .setName('stop')
                     .setDescription('Stop playback and leave voice'),
                 StopAudio
+            ),
+            new SlashCommand(
+                new SlashCommandBuilder()
+                    .setName('roll')
+                    .setDescription('Roll dice')
+                    .addStringOption((option) =>
+                        option
+                            .setName('dice')
+                            .setDescription('Dice, like 2d8, d20, or 20')
+                            .setRequired(true)
+                            .setMaxLength(32)
+                    ),
+                Roll
             ),
             new SlashCommand(
                 new SlashCommandBuilder()
