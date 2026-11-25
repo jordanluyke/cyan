@@ -9,9 +9,12 @@ const MessageConstructor = Message as unknown as new (
 ) => Message
 
 /**
- * Non-zero while a forward payload is inside `Message` construction.
- * The constructor calls `_add` again for each snapshot, using the original
- * message id. That write must not touch the live cache.
+ * Non-zero while a forward payload is inside `Message` construction or `_patch`.
+ * Both paths call `_add` again for each snapshot, using the original message id.
+ * That write must not touch the live cache.
+ *
+ * Gateway `MESSAGE_UPDATE` (embed resolve, edit) calls `_patch` directly and
+ * never enters `MessageManager#_add`, so the depth has to be raised here too.
  */
 let forwardDepth = 0
 
@@ -24,9 +27,31 @@ let uncachedDepth = 0
 
 let originalAdd: MessageAdd | null = null
 
+type MessagePatch = (this: Message, data: unknown) => unknown
+
+let originalPatch: MessagePatch | null = null
+
 function isForwardPayload(data: unknown): boolean {
     if (data == null || typeof data !== 'object') return false
     return Array.isArray((data as { message_snapshots?: unknown }).message_snapshots)
+}
+
+function patchedPatch(this: Message, data: unknown): unknown {
+    const patch = originalPatch
+    if (patch == null) {
+        throw new Error('message _patch patch is not installed')
+    }
+    const forwarding = isForwardPayload(data)
+    if (forwarding) forwardDepth++
+    try {
+        const patched = patch.call(this, data)
+        // `_update` never goes through `_add`, so the rebuild has to happen here.
+        // Still inside forwardDepth: rebuilding calls `_add` and must stay uncached.
+        if (forwarding) keepEveryForwardSnapshot(this, data)
+        return patched
+    } finally {
+        if (forwarding) forwardDepth--
+    }
 }
 
 function patchedAdd(this: unknown, data: unknown, cache?: boolean): unknown {
@@ -46,11 +71,9 @@ function patchedAdd(this: unknown, data: unknown, cache?: boolean): unknown {
     if (forwarding) forwardDepth++
     if (uncached) uncachedDepth++
     try {
-        const created = add.call(this, data, cache)
-        // Still inside forwardDepth. Rebuilding snapshots calls `_add` again,
-        // and that write must stay uncached.
-        if (forwarding) keepEveryForwardSnapshot(created, data)
-        return created
+        // `Message#_patch` rebuilds multi-snapshot forwards while this depth is
+        // still raised, so nested `_add` calls stay uncached.
+        return add.call(this, data, cache)
     } finally {
         if (forwarding) forwardDepth--
         if (uncached) uncachedDepth--
@@ -115,6 +138,10 @@ export function installMessageSnapshotGuard(): void {
     const proto = MessageManager.prototype as unknown as { _add: MessageAdd }
     originalAdd = proto._add
     proto._add = patchedAdd
+
+    const messageProto = Message.prototype as unknown as { _patch: MessagePatch }
+    originalPatch = messageProto._patch
+    messageProto._patch = patchedPatch
 }
 
 /**
