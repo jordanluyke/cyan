@@ -179,6 +179,101 @@ describe('forward snapshots during uncached fetch', () => {
         expect(general.messages.cache.has('1000')).toBe(false)
     })
 
+    test('a message update that includes snapshots does not revert the source', () => {
+        installMessageSnapshotGuard()
+        const { general, memes } = setup()
+        const original = general.messages._add(messageData('999', '333', 'edited content'), true)
+        const forward = memes.messages._add(
+            forwardData('1000', '334', '999', '333', 'OLD snapshot content'),
+            true,
+        )
+
+        // Gateway MESSAGE_UPDATE (embed resolve, edit) calls Message#_update,
+        // which patches in place and does not go through MessageManager#_add.
+        forward._update({
+            ...forwardData('1000', '334', '999', '333', 'OLD snapshot content'),
+            embeds: [{ title: 'preview', description: 'resolved later' }],
+        })
+
+        expect(original.content).toBe('edited content')
+        expect(original.attachments.size).toBe(1)
+        expect(original.embeds).toHaveLength(1)
+        expect(general.messages.cache.get('999')).toBe(original)
+        const snap = [...forward.messageSnapshots.values()][0]
+        expect(snap).not.toBe(original)
+        expect(snap.content).toBe('OLD snapshot content')
+        expect(forward.embeds[0]?.title).toBe('preview')
+    })
+
+    test('a multi-message forward update keeps every snapshot', () => {
+        installMessageSnapshotGuard()
+        const { general, memes } = setup()
+        const original = general.messages._add(messageData('999', '333', 'edited content'), true)
+        const snapshots = [
+            {
+                message: {
+                    content: 'first',
+                    attachments: [],
+                    embeds: [],
+                    mentions: [],
+                    mention_roles: [],
+                    timestamp: new Date().toISOString(),
+                    type: 0,
+                },
+            },
+            {
+                message: {
+                    content: 'second',
+                    attachments: [],
+                    embeds: [],
+                    mentions: [],
+                    mention_roles: [],
+                    timestamp: new Date().toISOString(),
+                    type: 0,
+                },
+            },
+        ]
+        const forward = memes.messages._add(
+            {
+                ...forwardData('1000', '334', '999', '333', 'second'),
+                message_snapshots: snapshots,
+            },
+            true,
+        )
+
+        forward._update({
+            ...forwardData('1000', '334', '999', '333', 'second'),
+            message_snapshots: snapshots,
+            embeds: [{ title: 'preview', description: 'resolved later' }],
+        })
+
+        expect([...forward.messageSnapshots.values()].map((snapshot) => snapshot.content)).toEqual([
+            'first',
+            'second',
+        ])
+        expect(original.content).toBe('edited content')
+        expect(original.attachments.size).toBe(1)
+        const updated = [...forward.messageSnapshots.values()]
+        expect(updated.every((snapshot) => snapshot !== original)).toBe(true)
+    })
+
+    test('a normal edit still updates the cached message', () => {
+        installMessageSnapshotGuard()
+        const { general } = setup()
+        const original = general.messages._add(messageData('999', '333', 'before'), true)
+
+        original._update({
+            id: '999',
+            channel_id: '333',
+            guild_id: '222',
+            content: 'after',
+        })
+
+        expect(original.content).toBe('after')
+        expect(original.attachments.size).toBe(1)
+        expect(original.embeds).toHaveLength(1)
+    })
+
     test('a forward of an uncached message does not keep the snapshot', () => {
         installMessageSnapshotGuard()
         const { general } = setup()
