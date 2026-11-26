@@ -26,6 +26,7 @@ alwaysApply: false
 
 - Inject `Config`; require `XAI_API_KEY` and throw `BotError` if missing
 - Keep context limits as coded (reply chain max 10; channel msgs max 15 × 300 chars; chat images max 3)
+- An @mention and a Discord reply use the same prompt. Lines note reply targets, gaps, and who a line was to. The model decides what the last message refers to
 - Reply-chain fetches stay in the invoking channel — do not follow forwards or other cross-channel references
 - Read forwarded text and images from the message snapshots already on that message. Do not fetch the source channel
 - Draw downloads source images only from Discord media hosts. Use embed proxy URLs; do not fetch `embed.image.url`

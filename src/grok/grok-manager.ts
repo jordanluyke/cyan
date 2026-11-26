@@ -15,6 +15,13 @@ import { GrokUtil, MAX_EDIT_IMAGES } from '../util/grok-util.js'
 import { readResponseBodyWithLimit, ResponseTooLargeError } from '../util/response-body-limit.js'
 import { buildDrawModal, parseDrawModalCustomId } from './draw-modal.js'
 import { CYAN_SYSTEM_PROMPT, GrokPrompt } from './model/grok-prompt.js'
+import {
+    ChatContextDraft,
+    dropRepliesOutside,
+    formatAskAboutPrompt,
+    formatChatPrompt,
+    toContextLines,
+} from './chat-context.js'
 import { replyChainImages } from './reply-chain-images.js'
 import { shouldFollowReplyReference } from './reply-reference.js'
 
@@ -51,33 +58,12 @@ export class GrokManager {
         if (!message.channel.isTextBased() || message.channel.isDMBased()) return
 
         const channel = message.channel as TextChannel
-        const botId = message.client.user.id
-        const userPrompt = this.stripBotMentions(message.content, botId)
-        const imageUrls = DiscordUtil.getMessageImages(message)
-        const asker = await DiscordUtil.getMemberDisplayName(message.guild, message)
-
-        let prompt: GrokPrompt | null = null
-        if (message.reference != null) {
-            prompt = await this.buildReplyChainPrompt(message, userPrompt, {
-                includeStartingMessage: false,
-                extraImageUrls: imageUrls,
-            })
-        }
+        const prompt = await this.buildChatPrompt(message)
         if (prompt == null) {
-            if (userPrompt.length === 0 && imageUrls.length === 0) {
-                await DiscordUtil.tryReply(message, {
-                    content: 'um… did you need something? try `@` me with a question~',
-                })
-                return
-            }
-            prompt = await this.buildDirectPrompt({
-                channel,
-                guild: message.guild,
-                asker,
-                userPrompt,
-                imageUrls,
-                beforeMessageId: message.id,
+            await DiscordUtil.tryReply(message, {
+                content: 'um… did you need something? try `@` me with a question~',
             })
+            return
         }
 
         const stopTyping = DiscordUtil.startTyping(channel)
@@ -290,44 +276,64 @@ export class GrokManager {
         }
     }
 
-    private stripBotMentions(content: string, botId: string): string {
-        return content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim()
-    }
-
-    private async buildDirectPrompt(opts: {
-        channel: TextChannel
-        guild: Guild | null
-        asker: string
-        userPrompt: string
-        imageUrls: string[]
-        beforeMessageId?: string
-    }): Promise<GrokPrompt> {
-        const context = await this.fetchChannelContext(
-            opts.channel,
-            opts.guild,
-            opts.beforeMessageId
-        )
-
-        let text: string
-        if (opts.userPrompt.length > 0) {
-            text =
-                context.length > 0
-                    ? `Recent chat:\n${context}\n\n${opts.asker} asks: ${opts.userPrompt}`
-                    : opts.userPrompt
-        } else {
-            text =
-                context.length > 0
-                    ? `Recent chat:\n${context}\n\n${opts.asker} sent a pic — what's in this?`
-                    : "what's in this pic?"
-        }
-        return new GrokPrompt(text, opts.imageUrls)
-    }
-
     /**
-     * Build a prompt from a reply chain.
-     * When includeStartingMessage is false (mention replies), the starting message is the
-     * user's @bot message — only walk its references; append userPrompt separately.
+     * Same transcript for an @mention and a reply. A reply target is a label on that line.
+     * Recent channel messages are the context either way. A reply also keeps the message
+     * it points at when that message is older than the window, so the label can be read.
      */
+    private async buildChatPrompt(message: Message): Promise<GrokPrompt | null> {
+        const channel = message.channel as TextChannel
+        const botId = message.client.user?.id ?? null
+        const imageUrls = DiscordUtil.getMessageImages(message)
+        const chain =
+            message.reference != null ? await this.fetchReplyChainFromReference(message) : []
+        const chainHasContent = chain.some(
+            (chainMessage) =>
+                DiscordUtil.getMessageText(chainMessage).length > 0 ||
+                DiscordUtil.getMessageImages(chainMessage).length > 0
+        )
+        const currentText = this.contextText(message, botId, false)
+        if (currentText.length === 0 && imageUrls.length === 0 && !chainHasContent) return null
+
+        let history: Message[] = []
+        try {
+            const fetched = await channel.messages.fetch({
+                limit: GrokManager.MAX_CHANNEL_CONTEXT,
+                before: message.id,
+            })
+            history = [...fetched.values()]
+        } catch {
+            history = []
+        }
+
+        const byId = new Map<string, Message>()
+        for (const prior of [...chain, ...history]) byId.set(prior.id, prior)
+        byId.set(message.id, message)
+        const ordered = [...byId.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        const fullMessageIds = new Set<string>([
+            message.id,
+            ...chain.map((chainMessage) => chainMessage.id),
+        ])
+
+        const now = Date.now()
+        const described = await this.describeContextMessages(
+            ordered,
+            message.guild,
+            channel.id,
+            true,
+            fullMessageIds
+        )
+        const lines = toContextLines(described.drafts, now)
+        const picked = replyChainImages(
+            described.images.map((image) => ({
+                imageUrls: image.imageUrls,
+                label: `${image.author}, ${DateUtil.formatRelativeAge(now - image.timestamp)}`,
+            }))
+        )
+        return new GrokPrompt(formatChatPrompt(lines, picked.earlierImageNote), picked.imageUrls)
+    }
+
+    /** Context menu Ask Cyan: the selected message and the chain that led to it. */
     private async buildReplyChainPrompt(
         start: Message,
         userPrompt: string,
@@ -353,45 +359,26 @@ export class GrokManager {
         }
 
         const now = Date.now()
-        const described: { imageUrls: string[]; label: string }[] = []
-        const parts: string[] = []
-        for (const chainMessage of chain) {
-            const content = DiscordUtil.getMessageText(chainMessage)
-            const displayName = await DiscordUtil.getMemberDisplayName(
-                start.guild,
-                chainMessage
-            )
-            const age = DateUtil.formatRelativeAge(now - chainMessage.createdTimestamp)
-            const msgImages = DiscordUtil.getMessageImages(chainMessage)
-            described.push({
-                imageUrls: msgImages,
-                label: `${displayName}, ${age}`,
-            })
-            if (content.length > 0) {
-                parts.push(
-                    msgImages.length > 0
-                        ? `${displayName} said (with pic, ${age}):\n${content}`
-                        : `${displayName} said (${age}):\n${content}`
-                )
-            } else if (msgImages.length > 0) {
-                parts.push(`${displayName} sent a pic (${age})`)
-            }
-        }
-
-        const picked = replyChainImages(described, extraImageUrls)
-        if (picked.earlierImageNote != null) {
-            parts.push(picked.earlierImageNote)
-        }
-
-        let text = parts.join('\n\n')
-        if (userPrompt.length > 0) {
-            text = text.length > 0 ? `${text}\n\n${userPrompt}` : userPrompt
-        } else if (picked.imageUrls.length > 0) {
-            text = text.length > 0 ? `${text}\n\nwhat's in this?` : "what's in this pic?"
-        } else {
-            text = text.length > 0 ? text : 'help them out with whatever they were talking about'
-        }
-
+        const describedMessages = await this.describeContextMessages(
+            chain,
+            start.guild,
+            start.channelId,
+            false
+        )
+        // A parent past the chain cap is omitted, so it is not labeled as a reply target.
+        const lines = toContextLines(dropRepliesOutside(describedMessages.drafts), now)
+        const picked = replyChainImages(
+            describedMessages.images.map((image) => ({
+                imageUrls: image.imageUrls,
+                label: `${image.author}, ${DateUtil.formatRelativeAge(now - image.timestamp)}`,
+            })),
+            extraImageUrls
+        )
+        const text = formatAskAboutPrompt({
+            chain: lines,
+            hasImages: picked.imageUrls.length > 0,
+            imageNote: picked.earlierImageNote,
+        })
         return new GrokPrompt(text, picked.imageUrls)
     }
 
@@ -439,37 +426,69 @@ export class GrokManager {
         }
     }
 
-    private async fetchChannelContext(
-        channel: TextChannel,
+    /**
+     * Oldest-first drafts. Truncated lines are background and drop pics.
+     * `fullMessageIds` stay whole, including pics, so a reply target is readable
+     * without a separate prompt shape.
+     */
+    private async describeContextMessages(
+        messages: readonly Message[],
         guild: Guild | null,
-        beforeMessageId?: string
-    ): Promise<string> {
-        try {
-            const fetched = await channel.messages.fetch({
-                limit: GrokManager.MAX_CHANNEL_CONTEXT,
-                ...(beforeMessageId != null ? { before: beforeMessageId } : {}),
-            })
-            const recent = [...fetched.values()].sort(
-                (a, b) => a.createdTimestamp - b.createdTimestamp
+        allowedChannelId: string,
+        truncate: boolean,
+        fullMessageIds?: ReadonlySet<string>
+    ): Promise<{
+        drafts: ChatContextDraft[]
+        images: { imageUrls: string[]; author: string; timestamp: number }[]
+    }> {
+        if (messages.length === 0) return { drafts: [], images: [] }
+        const botId = messages[0].client.user?.id ?? null
+        const drafts: ChatContextDraft[] = []
+        const images: { imageUrls: string[]; author: string; timestamp: number }[] = []
+        for (const message of messages) {
+            const author = await DiscordUtil.getMemberDisplayName(guild, message)
+            const imageUrls = DiscordUtil.getMessageImages(message)
+            const keepFull = !truncate || (fullMessageIds != null && fullMessageIds.has(message.id))
+            if (keepFull) images.push({ imageUrls, author, timestamp: message.createdTimestamp })
+            const text = this.contextText(message, botId, !keepFull)
+            const hasImage = keepFull && imageUrls.length > 0
+            if (text.length === 0 && !hasImage && !keepFull) continue
+            const replyToId = shouldFollowReplyReference(
+                message.reference?.channelId,
+                allowedChannelId
             )
-
-            const now = Date.now()
-            const parts: string[] = []
-            for (const recentMessage of recent) {
-                const content = DiscordUtil.getMessageText(recentMessage)
-                if (content.length === 0) continue
-                const displayName = await DiscordUtil.getMemberDisplayName(guild, recentMessage)
-                const age = DateUtil.formatRelativeAge(now - recentMessage.createdTimestamp)
-                const truncated =
-                    content.length > GrokManager.MAX_CONTEXT_MSG_LENGTH
-                        ? content.slice(0, GrokManager.MAX_CONTEXT_MSG_LENGTH) + '…'
-                        : content
-                parts.push(`${displayName} (${age}): ${truncated}`)
-            }
-            return parts.join('\n')
-        } catch {
-            return ''
+                ? (message.reference?.messageId ?? null)
+                : null
+            drafts.push({
+                id: message.id,
+                author,
+                timestamp: message.createdTimestamp,
+                text,
+                hasImage,
+                mentionsBot: this.messageMentionsBot(message, botId),
+                fromBot: botId != null && message.author.id === botId,
+                replyToId,
+            })
         }
+        return { drafts, images }
+    }
+
+    /** Bot pings become a "to Cyan" tag, so a raw mention id is not part of the subject. */
+    private contextText(message: Message, botId: string | null, truncate: boolean): string {
+        let content = DiscordUtil.getMessageText(message)
+        if (botId != null) {
+            content = content.replace(new RegExp(`<@!?${botId}>`, 'g'), ' ')
+            content = content.replace(/[ \t]{2,}/g, ' ').trim()
+        }
+        if (!truncate || content.length <= GrokManager.MAX_CONTEXT_MSG_LENGTH) return content
+        return content.slice(0, GrokManager.MAX_CONTEXT_MSG_LENGTH) + '…'
+    }
+
+    private messageMentionsBot(message: Message, botId: string | null): boolean {
+        if (botId == null) return false
+        if (message.mentions?.users?.has(botId)) return true
+        const content = message.content ?? ''
+        return content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`)
     }
 
     private async sendInteractionResponse(
