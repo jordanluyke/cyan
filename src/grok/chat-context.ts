@@ -1,6 +1,11 @@
 import { DateUtil } from '../util/date-util.js'
 import { TimeUnit } from '../util/time-unit.js'
 
+/** How a person appears in the transcript. The bot stays Cyan so a reply does not ping itself. */
+export function speakerToken(userId: string, fromBot: boolean): string {
+    return fromBot ? 'Cyan' : `<@${userId}>`
+}
+
 /** Silence this long is a topic break, not a pause in the same conversation. */
 const TOPIC_GAP_MS = TimeUnit.MINUTES.toMillis(30)
 

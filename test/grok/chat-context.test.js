@@ -3,6 +3,7 @@ import {
     formatAskAboutPrompt,
     formatChatPrompt,
     formatTopicGap,
+    speakerToken,
     toContextLines,
 } from '../../target/grok/chat-context.js'
 
@@ -23,6 +24,13 @@ function draft(overrides) {
         replyToId: overrides.replyToId ?? null,
     }
 }
+
+describe('speaker tokens', () => {
+    test('people are mentions and the bot stays Cyan', () => {
+        expect(speakerToken('111', false)).toBe('<@111>')
+        expect(speakerToken('222', true)).toBe('Cyan')
+    })
+})
 
 describe('topic gaps', () => {
     test('ignores a short pause and labels a long silence', () => {

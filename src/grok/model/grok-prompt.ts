@@ -1,7 +1,9 @@
 export class GrokPrompt {
     constructor(
         public text: string,
-        public imageUrls: string[] = []
+        public imageUrls: string[] = [],
+        /** User ids from the transcript that a reply is allowed to ping. */
+        public mentionIds: readonly string[] = []
     ) {}
 }
 
@@ -24,6 +26,7 @@ export const CYAN_SYSTEM_PROMPT =
 
     'Lines are oldest first and the last one is the message to answer. They note who each replies to, when a gap happened, and whether it was to you or from you. ' +
     'Decide what the last message refers to from that. A message that stands on its own is its own topic. ' +
+    'When you refer to someone in the chat, use their `<@id>` from the transcript. Do not use a display name. ' +
     'When a question needs current info, something you might be wrong about, or anything time-sensitive, ' +
     'search the web thoroughly before answering — dig until you have a solid answer, not one shallow lookup. ' +
     'Default to text-only replies. Do not call image tools unless the user explicitly asks you to draw, create, generate, or edit an image ' +

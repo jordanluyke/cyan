@@ -19,10 +19,39 @@ const TYPING_REFRESH_MS = 8000
 export class DiscordUtil {
     /**
      * A normal channel message parses users, roles, and @everyone when this is omitted.
-     * Model text is user-influenced, so replies must not ping.
+     * Model text is user-influenced, so replies must not ping unless a user id was in the prompt.
      */
     public static suppressedMentions(): MessageMentionOptions {
         return { parse: [], repliedUser: false }
+    }
+
+    /** User ids written as `<@id>` or `<@!id>`, skipping one id (the bot). */
+    public static mentionIdsIn(content: string, exceptUserId?: string | null): string[] {
+        const ids: string[] = []
+        const seen = new Set<string>()
+        for (const match of content.matchAll(/<@!?(\d+)>/g)) {
+            const id = match[1]
+            if ((exceptUserId != null && id === exceptUserId) || seen.has(id)) continue
+            seen.add(id)
+            ids.push(id)
+        }
+        return ids
+    }
+
+    /**
+     * Ping only user ids that were in the transcript and that this text actually mentions.
+     * Roles and @everyone stay off.
+     */
+    public static userMentions(
+        content: string,
+        allowedUserIds: readonly string[]
+    ): MessageMentionOptions {
+        const allowed = new Set(allowedUserIds)
+        return {
+            parse: [],
+            users: this.mentionIdsIn(content).filter((id) => allowed.has(id)),
+            repliedUser: false,
+        }
     }
 
     /** Reply to a message; no-ops if the original was deleted. */
@@ -33,7 +62,7 @@ export class DiscordUtil {
         try {
             return await message.reply({
                 ...options,
-                allowedMentions: this.suppressedMentions(),
+                allowedMentions: options.allowedMentions ?? this.suppressedMentions(),
             })
         } catch (err) {
             if (err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.UnknownMessage) {

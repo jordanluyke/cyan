@@ -35,6 +35,21 @@ describe('suppressed mentions', () => {
             })
         ).toEqual({ parse: [], replied_user: false })
     })
+
+    test('a reply pings only people from the transcript', () => {
+        expect(DiscordUtil.mentionIdsIn('<@111> <@!222> <@111> <@333>', '333')).toEqual([
+            '111',
+            '222',
+        ])
+        expect(
+            resolvedMentions({
+                content: '<@111> <@222> <@&456> @everyone',
+                allowedMentions: DiscordUtil.userMentions('<@111> <@222> <@&456> @everyone', [
+                    '111',
+                ]),
+            })
+        ).toEqual({ parse: [], users: ['111'], replied_user: false })
+    })
 })
 
 describe('discord hosted media urls', () => {

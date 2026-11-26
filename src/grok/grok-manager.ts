@@ -1,7 +1,6 @@
 import { injectable } from 'tsyringe'
 import {
     ChatInputCommandInteraction,
-    Guild,
     Message,
     MessageContextMenuCommandInteraction,
     ModalSubmitInteraction,
@@ -20,6 +19,7 @@ import {
     dropRepliesOutside,
     formatAskAboutPrompt,
     formatChatPrompt,
+    speakerToken,
     toContextLines,
 } from './chat-context.js'
 import { replyChainImages } from './reply-chain-images.js'
@@ -49,7 +49,12 @@ export class GrokManager {
             prompt.imageUrls,
             CYAN_SYSTEM_PROMPT
         )
-        await this.sendInteractionResponse(interaction, response.text, response.images)
+        await this.sendInteractionResponse(
+            interaction,
+            response.text,
+            response.images,
+            prompt.mentionIds
+        )
     }
 
     public async askFromMention(message: Message): Promise<void> {
@@ -74,7 +79,12 @@ export class GrokManager {
                 prompt.imageUrls,
                 CYAN_SYSTEM_PROMPT
             )
-            await this.sendMessageResponse(message, response.text, response.images)
+            await this.sendMessageResponse(
+                message,
+                response.text,
+                response.images,
+                prompt.mentionIds
+            )
         } finally {
             stopTyping()
         }
@@ -318,7 +328,6 @@ export class GrokManager {
         const now = Date.now()
         const described = await this.describeContextMessages(
             ordered,
-            message.guild,
             channel.id,
             true,
             fullMessageIds
@@ -330,7 +339,8 @@ export class GrokManager {
                 label: `${image.author}, ${DateUtil.formatRelativeAge(now - image.timestamp)}`,
             }))
         )
-        return new GrokPrompt(formatChatPrompt(lines, picked.earlierImageNote), picked.imageUrls)
+        const text = formatChatPrompt(lines, picked.earlierImageNote)
+        return new GrokPrompt(text, picked.imageUrls, DiscordUtil.mentionIdsIn(text, botId))
     }
 
     /** Context menu Ask Cyan: the selected message and the chain that led to it. */
@@ -359,12 +369,7 @@ export class GrokManager {
         }
 
         const now = Date.now()
-        const describedMessages = await this.describeContextMessages(
-            chain,
-            start.guild,
-            start.channelId,
-            false
-        )
+        const describedMessages = await this.describeContextMessages(chain, start.channelId, false)
         // A parent past the chain cap is omitted, so it is not labeled as a reply target.
         const lines = toContextLines(dropRepliesOutside(describedMessages.drafts), now)
         const picked = replyChainImages(
@@ -379,7 +384,11 @@ export class GrokManager {
             hasImages: picked.imageUrls.length > 0,
             imageNote: picked.earlierImageNote,
         })
-        return new GrokPrompt(text, picked.imageUrls)
+        return new GrokPrompt(
+            text,
+            picked.imageUrls,
+            DiscordUtil.mentionIdsIn(text, start.client.user?.id)
+        )
     }
 
     /** Oldest → newest including the starting message, walking up references. */
@@ -433,7 +442,6 @@ export class GrokManager {
      */
     private async describeContextMessages(
         messages: readonly Message[],
-        guild: Guild | null,
         allowedChannelId: string,
         truncate: boolean,
         fullMessageIds?: ReadonlySet<string>
@@ -446,7 +454,8 @@ export class GrokManager {
         const drafts: ChatContextDraft[] = []
         const images: { imageUrls: string[]; author: string; timestamp: number }[] = []
         for (const message of messages) {
-            const author = await DiscordUtil.getMemberDisplayName(guild, message)
+            const fromBot = botId != null && message.author.id === botId
+            const author = speakerToken(message.author.id, fromBot)
             const imageUrls = DiscordUtil.getMessageImages(message)
             const keepFull = !truncate || (fullMessageIds != null && fullMessageIds.has(message.id))
             if (keepFull) images.push({ imageUrls, author, timestamp: message.createdTimestamp })
@@ -466,7 +475,7 @@ export class GrokManager {
                 text,
                 hasImage,
                 mentionsBot: this.messageMentionsBot(message, botId),
-                fromBot: botId != null && message.author.id === botId,
+                fromBot,
                 replyToId,
             })
         }
@@ -494,7 +503,8 @@ export class GrokManager {
     private async sendInteractionResponse(
         interaction: ChatInputCommandInteraction | MessageContextMenuCommandInteraction,
         response: string,
-        images: Buffer[] = []
+        images: Buffer[] = [],
+        mentionIds: readonly string[] = []
     ): Promise<void> {
         const files = images.map((attachment, i) => ({
             name: images.length === 1 ? 'cyan-draw.png' : `cyan-draw-${i + 1}.png`,
@@ -514,13 +524,13 @@ export class GrokManager {
 
         await interaction.editReply({
             content: chunks[0],
-            allowedMentions: DiscordUtil.suppressedMentions(),
+            allowedMentions: DiscordUtil.userMentions(chunks[0], mentionIds),
             ...(files.length > 0 ? { files } : {}),
         })
         for (const chunk of chunks.slice(1)) {
             await interaction.followUp({
                 content: chunk,
-                allowedMentions: DiscordUtil.suppressedMentions(),
+                allowedMentions: DiscordUtil.userMentions(chunk, mentionIds),
             })
         }
     }
@@ -528,7 +538,8 @@ export class GrokManager {
     private async sendMessageResponse(
         message: Message,
         response: string,
-        images: Buffer[] = []
+        images: Buffer[] = [],
+        mentionIds: readonly string[] = []
     ): Promise<void> {
         const channel = message.channel as TextChannel
         const files = images.map((attachment, i) => ({
@@ -549,13 +560,14 @@ export class GrokManager {
 
         const reply = await DiscordUtil.tryReply(message, {
             content: chunks[0],
+            allowedMentions: DiscordUtil.userMentions(chunks[0], mentionIds),
             ...(files.length > 0 ? { files } : {}),
         })
         if (reply == null) return
         for (const chunk of chunks.slice(1)) {
             await channel.send({
                 content: chunk,
-                allowedMentions: DiscordUtil.suppressedMentions(),
+                allowedMentions: DiscordUtil.userMentions(chunk, mentionIds),
             })
         }
     }
