@@ -1,6 +1,7 @@
 import { injectable } from 'tsyringe'
 import {
     ChatInputCommandInteraction,
+    Guild,
     Message,
     MessageContextMenuCommandInteraction,
     ModalSubmitInteraction,
@@ -328,6 +329,7 @@ export class GrokManager {
         const now = Date.now()
         const described = await this.describeContextMessages(
             ordered,
+            message.guild,
             channel.id,
             true,
             fullMessageIds
@@ -369,7 +371,12 @@ export class GrokManager {
         }
 
         const now = Date.now()
-        const describedMessages = await this.describeContextMessages(chain, start.channelId, false)
+        const describedMessages = await this.describeContextMessages(
+            chain,
+            start.guild,
+            start.channelId,
+            false
+        )
         // A parent past the chain cap is omitted, so it is not labeled as a reply target.
         const lines = toContextLines(dropRepliesOutside(describedMessages.drafts), now)
         const picked = replyChainImages(
@@ -442,6 +449,7 @@ export class GrokManager {
      */
     private async describeContextMessages(
         messages: readonly Message[],
+        guild: Guild | null,
         allowedChannelId: string,
         truncate: boolean,
         fullMessageIds?: ReadonlySet<string>
@@ -455,7 +463,8 @@ export class GrokManager {
         const images: { imageUrls: string[]; author: string; timestamp: number }[] = []
         for (const message of messages) {
             const fromBot = botId != null && message.author.id === botId
-            const author = speakerToken(message.author.id, fromBot)
+            const name = await DiscordUtil.getMemberDisplayName(guild, message)
+            const author = speakerToken(message.author.id, name, fromBot)
             const imageUrls = DiscordUtil.getMessageImages(message)
             const keepFull = !truncate || (fullMessageIds != null && fullMessageIds.has(message.id))
             if (keepFull) images.push({ imageUrls, author, timestamp: message.createdTimestamp })

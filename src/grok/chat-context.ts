@@ -1,9 +1,12 @@
 import { DateUtil } from '../util/date-util.js'
 import { TimeUnit } from '../util/time-unit.js'
 
-/** How a person appears in the transcript. The bot stays Cyan so a reply does not ping itself. */
-export function speakerToken(userId: string, fromBot: boolean): string {
-    return fromBot ? 'Cyan' : `<@${userId}>`
+/** Mention plus display name. The bot stays Cyan so a reply does not ping itself. */
+export function speakerToken(userId: string, name: string, fromBot: boolean): string {
+    if (fromBot) return 'Cyan'
+    const mention = `<@${userId}>`
+    const trimmed = name.trim()
+    return trimmed.length === 0 ? mention : `${mention} (${trimmed})`
 }
 
 /** Silence this long is a topic break, not a pause in the same conversation. */

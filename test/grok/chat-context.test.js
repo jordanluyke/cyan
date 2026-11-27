@@ -26,9 +26,10 @@ function draft(overrides) {
 }
 
 describe('speaker tokens', () => {
-    test('people are mentions and the bot stays Cyan', () => {
-        expect(speakerToken('111', false)).toBe('<@111>')
-        expect(speakerToken('222', true)).toBe('Cyan')
+    test('people are a mention plus their name, and the bot stays Cyan', () => {
+        expect(speakerToken('111', 'Jordan', false)).toBe('<@111> (Jordan)')
+        expect(speakerToken('111', '  ', false)).toBe('<@111>')
+        expect(speakerToken('222', 'Cyan', true)).toBe('Cyan')
     })
 })
 
