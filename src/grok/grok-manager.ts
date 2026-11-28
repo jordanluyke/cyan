@@ -422,8 +422,9 @@ export class GrokManager {
 
     /**
      * Full fetch so a cached reply still has its parent and attachments.
-     * Only `allowedChannelId`: a forward's reference points at another channel
-     * the bot can read when the people seeing this reply cannot.
+     * Forwards are not replies, including a forward of a message in this channel.
+     * Only `allowedChannelId`: a crosspost or thread starter points at another
+     * channel the bot can read when the people seeing this reply cannot.
      */
     private async fetchReplyParent(
         message: Message,
@@ -432,7 +433,16 @@ export class GrokManager {
         const messageId = message.reference?.messageId
         const channelId = message.reference?.channelId
         if (messageId == null || channelId == null) return null
-        if (!shouldFollowReplyReference(channelId, allowedChannelId)) return null
+        if (
+            !shouldFollowReplyReference(
+                channelId,
+                allowedChannelId,
+                message.reference?.type,
+                message.messageSnapshots?.size
+            )
+        ) {
+            return null
+        }
         const channel = message.client.channels.resolve(channelId)
         if (channel == null || !channel.isTextBased()) return null
         try {
@@ -473,7 +483,9 @@ export class GrokManager {
             if (text.length === 0 && !hasImage && !keepFull) continue
             const replyToId = shouldFollowReplyReference(
                 message.reference?.channelId,
-                allowedChannelId
+                allowedChannelId,
+                message.reference?.type,
+                message.messageSnapshots?.size
             )
                 ? (message.reference?.messageId ?? null)
                 : null

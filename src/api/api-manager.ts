@@ -14,6 +14,7 @@ import { BotError } from '../audio/model/error/bot-error.js'
 import { ApiV1 } from './api-v1.js'
 import { installMessageSnapshotGuard } from '../channel/snapshot-cache.js'
 import { GrokManager } from '../grok/grok-manager.js'
+import { isForwardReference } from '../grok/reply-reference.js'
 import { isDrawModalCustomId } from '../grok/draw-modal.js'
 import { DiscordUtil } from '../util/discord-util.js'
 
@@ -107,6 +108,9 @@ export class ApiManager {
 
     private async isReplyToBot(message: Message): Promise<boolean> {
         if (message.reference == null || message.client.user == null) return false
+        // Forwarding Cyan's message sets a reference to it. That is not a reply,
+        // and fetching it would answer the snapshot in this channel.
+        if (isForwardReference(message.reference.type, message.messageSnapshots?.size)) return false
         try {
             const referenced = await message.fetchReference()
             return referenced.author.id === message.client.user.id
